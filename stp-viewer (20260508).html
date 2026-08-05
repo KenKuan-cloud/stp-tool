@@ -1,0 +1,3878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STP Viewer — CAD Studio</title>
+<!-- fonts removed: Brave blocks network from file:// — using system fonts -->
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0c0c10;--panel:#13131a;--panel2:#1a1a24;--border:#252535;
+  --accent:#00d4ff;--accent2:#ff6b35;--text:#c8cdd4;--text-dim:#5a6070;
+  --green:#4ade80;--red:#f87171;
+}
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column}
+
+/* ── TOOLBAR ── */
+.toolbar{height:46px;background:var(--panel);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 10px;gap:6px;flex-shrink:0;overflow-x:auto}
+.toolbar::-webkit-scrollbar{height:0}
+.app-title{font-size:14px;font-weight:700;letter-spacing:2.5px;color:var(--accent);
+  text-transform:uppercase;white-space:nowrap;margin-right:4px}
+.tb-sep{width:1px;height:22px;background:var(--border);margin:0 2px;flex-shrink:0}
+.btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);
+  font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:12px;font-weight:600;padding:4px 10px;
+  cursor:pointer;border-radius:3px;letter-spacing:.5px;transition:all .15s;
+  display:flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.active{background:rgba(0,212,255,.12);border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:rgba(0,212,255,.1);border-color:var(--accent);color:var(--accent)}
+.btn.warn{background:rgba(255,107,53,.08);border-color:var(--accent2);color:var(--accent2)}
+.btn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* ── MAIN LAYOUT ── */
+.main{flex:1;display:flex;overflow:hidden;min-height:0}
+
+/* ── LEFT PANEL ── */
+.side-panel{width:220px;background:var(--panel);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;flex-shrink:0;min-height:0}
+.phead{padding:8px 12px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;
+  letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);display:flex;
+  align-items:center;justify-content:space-between}
+.parts-list{flex:1;overflow-y:auto;padding:4px}
+.parts-list::-webkit-scrollbar{width:3px}
+.parts-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* Edit mode toggle in parts header */
+.edit-toggle{
+  background:none;border:1px solid var(--border);color:var(--text-dim);
+  padding:2px 5px;border-radius:3px;cursor:pointer;display:flex;align-items:center;
+  transition:all .12s;
+}
+.edit-toggle:hover{color:var(--text);border-color:var(--text-dim)}
+.edit-toggle.active{
+  color:#ffb84a;border-color:rgba(255,184,74,.55);background:rgba(255,184,74,.08);
+}
+/* When edit mode is off, dim the colour dot's hover affordance and stop the
+   name from looking editable */
+body:not(.edit-on) .part-dot{cursor:default}
+body:not(.edit-on) .part-dot:hover{transform:none;border-color:rgba(255,255,255,.15)}
+
+/* ── GROUPS ── */
+.group-action-bar{
+  display:none;padding:6px 8px;background:rgba(0,212,255,.06);
+  border-bottom:1px solid rgba(0,212,255,.18);
+  font-size:11px;color:var(--text-dim);align-items:center;gap:6px;
+}
+body.group-on .group-action-bar{display:flex}
+.group-action-bar .gcount{color:var(--text);font-family:ui-monospace,monospace;font-size:11px}
+.group-action-bar button{
+  background:rgba(0,212,255,.12);border:1px solid rgba(0,212,255,.4);
+  color:var(--accent);padding:3px 8px;border-radius:3px;cursor:pointer;
+  font-size:10.5px;letter-spacing:.3px;
+}
+.group-action-bar button:hover{background:rgba(0,212,255,.22)}
+.group-action-bar button:disabled{opacity:.35;cursor:not-allowed}
+.group-action-bar .gclear{
+  background:transparent;border:1px solid var(--border);color:var(--text-dim);
+}
+.group-action-bar .gclear:hover{background:var(--panel2);color:var(--text)}
+
+/* Selection checkbox in group mode (replaces the colour dot's role visually) */
+.part-check{
+  width:13px;height:13px;border-radius:2px;flex-shrink:0;
+  border:1px solid var(--border);background:var(--panel);
+  display:none;align-items:center;justify-content:center;
+  color:var(--accent);font-size:10px;line-height:1;cursor:pointer;
+}
+body.group-on .part-check{display:flex}
+.part-check.checked{background:rgba(0,212,255,.18);border-color:var(--accent)}
+.part-check.checked::after{content:'✓';color:var(--accent);font-weight:700}
+
+/* In group mode, mute the colour dot (selection takes precedence) */
+body.group-on .part-dot{opacity:.35}
+/* And highlight checked rows */
+body.group-on .part-item.gsel{background:rgba(0,212,255,.08)}
+
+/* Group header row */
+.group-row{
+  display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:3px;
+  cursor:pointer;font-size:11.5px;font-weight:600;color:var(--text);
+  border:1px solid transparent;transition:background .1s;
+  background:rgba(255,255,255,.025);
+}
+.group-row:hover{background:var(--panel2)}
+.group-row.collapsed{opacity:.85}
+.group-row .gcaret{
+  width:11px;flex-shrink:0;display:inline-flex;justify-content:center;
+  color:var(--text-dim);transition:transform .12s;font-size:9px;
+}
+.group-row.collapsed .gcaret{transform:rotate(-90deg)}
+.group-row .gname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.group-row .gcount-badge{
+  font-size:9.5px;font-weight:500;color:var(--text-dim);
+  background:rgba(255,255,255,.05);padding:1px 5px;border-radius:8px;
+  font-family:ui-monospace,monospace;
+}
+.group-row .gname-edit{
+  flex:1;font-size:11.5px;font-weight:600;background:var(--panel2);
+  border:1px solid var(--accent);color:var(--text);padding:1px 4px;
+  border-radius:2px;font-family:inherit;outline:none;min-width:0;width:100%;
+}
+.group-row .gdelete{
+  background:none;border:none;cursor:pointer;color:var(--text-dim);
+  padding:2px;border-radius:2px;display:none;align-items:center;font-size:13px;
+}
+body.edit-on .group-row .gdelete{display:flex}
+.group-row .gdelete:hover{color:#ff8080;background:rgba(255,128,128,.1)}
+
+.group-row .gedit{
+  background:none;border:none;cursor:pointer;color:var(--text-dim);
+  padding:2px;border-radius:2px;display:none;align-items:center;
+}
+body.group-on .group-row .gedit{display:flex}
+.group-row .gedit:hover{color:var(--accent);background:rgba(0,212,255,.1)}
+.group-row.editing{
+  background:rgba(0,212,255,.10);border-color:rgba(0,212,255,.45);
+}
+.group-row.editing .gedit{color:var(--accent)}
+
+/* Member parts indented under group */
+.part-item.in-group{margin-left:14px}
+
+.part-item{display:flex;align-items:center;padding:5px 7px;border-radius:3px;cursor:pointer;
+  gap:7px;transition:background .1s;border:1px solid transparent}
+.part-item:hover{background:var(--panel2)}
+.part-item.selected{background:rgba(0,212,255,.07);border-color:rgba(0,212,255,.25)}
+.part-item.hidden-part{opacity:.4}
+.part-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;border:1px solid rgba(255,255,255,.15);cursor:pointer;transition:transform .1s}
+.part-dot:hover{transform:scale(1.35);border-color:var(--accent)}
+.part-name{flex:1;font-size:11.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.part-name-edit{flex:1;font-size:11.5px;font-weight:500;background:var(--panel2);
+  border:1px solid var(--accent);color:var(--text);padding:1px 4px;border-radius:2px;
+  font-family:inherit;outline:none;min-width:0;width:100%}
+.vis-btn{background:none;border:none;cursor:pointer;color:var(--text-dim);padding:2px 3px;
+  border-radius:2px;transition:color .12s;flex-shrink:0;display:flex;align-items:center}
+.vis-btn:hover{color:var(--text)}
+.vis-btn svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
+
+/* ── VIEWPORT ── */
+.viewport{flex:1;position:relative;overflow:hidden;background:var(--bg)}
+#canvas{width:100%;height:100%;display:block;outline:none}
+
+/* ── DROP OVERLAY ── */
+.drop-overlay{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:14px;z-index:10}
+.drop-overlay.gone{display:none}
+.drop-icon-wrap{width:72px;height:72px;border:1.5px solid var(--border);border-radius:14px;
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,var(--panel2),var(--panel))}
+.drop-icon-wrap svg{width:34px;height:34px;stroke:var(--text-dim);fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.drop-title{font-size:20px;font-weight:700;letter-spacing:.5px}
+.drop-sub{font-size:13px;color:var(--text-dim);text-align:center}
+.drop-cta{padding:8px 22px;background:rgba(0,212,255,.1);border:1px solid var(--accent);
+  color:var(--accent);font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;font-weight:700;
+  letter-spacing:1px;cursor:pointer;border-radius:4px;transition:all .15s}
+.drop-cta:hover{background:rgba(0,212,255,.2)}
+.drop-formats{font-size:11px;color:var(--text-dim);letter-spacing:1px}
+
+/* ── DRAG ACTIVE ── */
+.viewport.drag-over #canvas{outline:2px dashed var(--accent);outline-offset:-2px}
+
+/* ── LOADING ── */
+.loading-overlay{position:absolute;inset:0;background:rgba(12,12,16,.88);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:16px;z-index:20;backdrop-filter:blur(6px)}
+.loading-overlay.gone{display:none}
+.spinner{width:38px;height:38px;border:2px solid var(--border);border-top-color:var(--accent);
+  border-radius:50%;animation:spin .75s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-msg{font-size:13px;font-weight:600;letter-spacing:1px;color:var(--text-dim)}
+
+/* ── GIZMO ── */
+#gizmo{position:absolute;bottom:12px;right:12px;width:76px;height:76px;pointer-events:none;z-index:5}
+
+/* ── PAINT SWATCHES ── */
+.swatch{
+  width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,.15);
+  cursor:pointer;padding:0;transition:all .12s;
+}
+.swatch:hover{transform:scale(1.15)}
+.swatch.active{border-color:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.5),0 0 6px rgba(255,255,255,.4)}
+
+/* ── HELP PANEL (bottom-left) ── */
+#help-panel{
+  position:absolute;bottom:12px;left:12px;z-index:5;
+  background:rgba(20,22,28,.78);backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,.08);border-radius:6px;
+  font-size:10.5px;color:var(--text-dim);line-height:1.6;
+  user-select:none;max-width:240px;
+  transition:all .15s ease;
+}
+#help-panel .help-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:6px 10px;cursor:pointer;color:var(--text);
+  font-size:10px;letter-spacing:1px;text-transform:uppercase;
+}
+#help-panel .help-header:hover{color:var(--accent)}
+#help-panel .help-body{
+  padding:4px 10px 8px 10px;border-top:1px solid rgba(255,255,255,.06);
+}
+#help-panel.collapsed .help-body{display:none}
+#help-panel.collapsed .help-header{border:none}
+#help-panel .help-body div{white-space:nowrap}
+#help-panel .k{
+  display:inline-block;min-width:14px;padding:0 4px;margin-right:4px;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);
+  border-radius:3px;color:var(--text);font-family:monospace;font-size:9.5px;
+  text-align:center;
+}
+#help-panel .chev{font-size:9px;transition:transform .15s}
+#help-panel.collapsed .chev{transform:rotate(-90deg)}
+
+/* ── COORD BAR ── */
+#coord-bar{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
+  background:rgba(13,13,20,.88);border:1px solid var(--border);border-radius:3px;
+  padding:3px 12px;font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:11px;color:var(--text-dim);
+  backdrop-filter:blur(8px);pointer-events:none;z-index:5;display:none}
+
+/* ── MEASURE DOTS ── */
+.m-dot{position:absolute;width:8px;height:8px;border-radius:50%;background:var(--accent2);
+  border:2px solid #fff;transform:translate(-50%,-50%);pointer-events:none;z-index:6}
+
+/* ── RIGHT PANEL ── */
+.right-panel{width:220px;background:var(--panel);border-left:1px solid var(--border);
+  display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+.right-panel::-webkit-scrollbar{width:3px}
+.right-panel::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.rsec{border-bottom:1px solid var(--border);padding:10px 12px}
+.rsec-title{font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px}
+.info-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
+.info-label{font-size:12px;color:var(--text-dim)}
+.info-val{font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:11px;color:var(--text)}
+
+/* Section bound inputs (min/max for slider range) */
+.sec-bounds{display:flex;flex-direction:column;gap:3px}
+.sec-bound-row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.sec-bound-input{
+  width:90px;font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:11px;
+  background:var(--panel2);border:1px solid var(--border);color:var(--text);
+  padding:2px 5px;border-radius:3px;text-align:right;
+  -moz-appearance:textfield;
+}
+.sec-bound-input::-webkit-outer-spin-button,
+.sec-bound-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.sec-bound-input:focus{outline:none;border-color:var(--accent)}
+
+.sel-box{background:var(--panel2);border:1px solid var(--border);border-radius:3px;padding:8px;
+  font-size:12px;color:var(--text-dim);min-height:40px}
+.sel-name{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px;word-break:break-all}
+.sel-color-row{display:flex;gap:6px;align-items:center;margin-top:4px}
+.sel-swatch{width:12px;height:12px;border-radius:2px;border:1px solid rgba(255,255,255,.15)}
+.sel-hex{font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:10px;color:var(--text-dim)}
+
+.measure-list{display:flex;flex-direction:column;gap:5px;margin-bottom:8px;
+  max-height:180px;overflow-y:auto}
+.measure-list::-webkit-scrollbar{width:3px}
+.measure-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.m-item{background:var(--panel2);border:1px solid var(--border);border-radius:3px;
+  padding:7px 9px;display:flex;justify-content:space-between;align-items:center}
+.m-tag{font-size:10px;color:var(--text-dim);letter-spacing:.5px}
+.m-val{font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:12px;color:var(--accent2);font-weight:500}
+.m-del{background:none;border:none;cursor:pointer;color:var(--text-dim);font-size:14px;
+  padding:0 3px;border-radius:2px;transition:color .12s;line-height:1}
+.m-del:hover{color:var(--red)}
+.m-hint{font-size:11px;color:var(--text-dim);line-height:1.5;font-style:italic}
+
+#file-input{display:none}
+
+/* Tooltip */
+.tooltip{position:absolute;background:rgba(13,13,20,.95);border:1px solid var(--border);
+  border-radius:3px;padding:4px 8px;font-size:11px;color:var(--text);pointer-events:none;
+  z-index:10;white-space:nowrap;font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;display:none}
+
+/* No parts msg */
+.no-parts{padding:16px 8px;text-align:center;color:var(--text-dim);font-size:12px;line-height:1.6}
+</style>
+</head>
+<body>
+
+<!-- TOOLBAR -->
+<div class="toolbar">
+  <span class="app-title">STP Viewer</span>
+  <div class="tb-sep"></div>
+  <button class="btn primary" onclick="document.getElementById('file-input').click()">
+    <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    Open STP
+  </button>
+  <input type="file" id="file-input" accept=".stp,.step">
+  <input type="color" id="part-color-picker" style="position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;border:0;padding:0;margin:0;z-index:-1">
+  <div class="tb-sep"></div>
+  <button class="btn" onclick="fitToView()" title="Fit to View">
+    <svg viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>Fit
+  </button>
+  <button class="btn" onclick="resetCamera()" title="Reset Camera">
+    <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>Reset
+  </button>
+  <div class="tb-sep"></div>
+  <button class="btn" id="btn-wire" onclick="toggleWireframe()">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>Wireframe
+  </button>
+  <button class="btn" id="btn-ghost" onclick="toggleGhost()">
+    <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9v8l2-2 2 2 2-2 2 2 2-2 2 2V9c0-3.87-3.13-7-7-7z"/></svg>Ghost
+  </button>
+  <button class="btn active" id="btn-edges" onclick="toggleEdges()">
+    <svg viewBox="0 0 24 24"><path d="M12 2l10 6v8l-10 6-10-6V8z"/><path d="M12 22V14M22 8l-10 6M2 8l10 6"/></svg>Edges
+  </button>
+  <button class="btn active" id="btn-grid" onclick="toggleGrid()" title="Show/hide floor grid">
+    <svg viewBox="0 0 24 24"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/></svg>Grid
+  </button>
+  <button class="btn" id="btn-section" onclick="toggleSection()">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>Section
+  </button>
+  <div class="tb-sep"></div>
+  <button class="btn" id="btn-measure" onclick="toggleMeasure()">
+    <svg viewBox="0 0 24 24"><line x1="4" y1="20" x2="20" y2="4"/><path d="M6 16l2-2M10 12l2-2M14 8l2-2"/></svg>Measure
+  </button>
+  <button class="btn" id="btn-mindist" onclick="toggleMinDist()" title="Closest distance between two parts">
+    <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><line x1="7" y1="12" x2="17" y2="12" stroke-dasharray="2 2"/></svg>Min Dist
+  </button>
+  <button class="btn" onclick="clearMeasurements()">
+    <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>Clear
+  </button>
+  <div class="tb-sep"></div>
+  <button class="btn" id="btn-paint" onclick="togglePaint()" title="Paint / highlight a surface">
+    <svg viewBox="0 0 24 24"><path d="M19 11H5a2 2 0 00-2 2v2a2 2 0 002 2h14a2 2 0 002-2v-2a2 2 0 00-2-2z"/><path d="M17 11V5a2 2 0 00-2-2H9a2 2 0 00-2 2v6"/><path d="M12 17v4"/></svg>Paint
+  </button>
+  <div id="paint-swatches" style="display:none;align-items:center;gap:4px;padding:0 6px">
+    <button class="swatch active" data-color="#ff3b3b" style="background:#ff3b3b"></button>
+    <button class="swatch"        data-color="#ffd93b" style="background:#ffd93b"></button>
+    <button class="swatch"        data-color="#3bd96b" style="background:#3bd96b"></button>
+    <button class="swatch"        data-color="#3ba6ff" style="background:#3ba6ff"></button>
+  </div>
+  <button class="btn" id="btn-paint-clear" onclick="clearPaint()" style="display:none" title="Remove all paint">
+    <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>Clear Paint
+  </button>
+  <div class="tb-sep"></div>
+  <button class="btn" onclick="showAll()">Show All</button>
+  <button class="btn" onclick="hideAll()">Hide All</button>
+  <div class="tb-sep"></div>
+  <button class="btn" onclick="exportSTL()" title="Export visible parts as STL">
+    <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>STL
+  </button>
+  <button class="btn primary" onclick="exportFilteredSTEP()" title="Save visible parts as STEP (remove hidden)">
+    <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Save STP
+  </button>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+  <!-- LEFT: Parts Tree -->
+  <div class="side-panel">
+    <div class="phead">
+      <span>Parts Tree</span>
+      <span style="display:flex;align-items:center;gap:6px">
+        <button id="btn-edit-mode" class="edit-toggle" onclick="toggleEditMode()"
+                title="Edit mode: rename / recolor parts. When off, double-click a part to fit to it.">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4L16.5 3.5z"/>
+          </svg>
+        </button>
+        <button id="btn-group-mode" class="edit-toggle" onclick="toggleGroupMode()"
+                title="Group mode: select parts then create a group. Shift-click for range, drag to sweep.">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+            <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+          </svg>
+        </button>
+        <span id="part-count" style="font-size:11px;color:var(--text-dim);font-family:ui-monospace,'Cascadia Mono','Consolas',monospace"></span>
+      </span>
+    </div>
+    <div class="group-action-bar" id="group-action-bar">
+      <span class="gcount" id="gcount-label">0 selected</span>
+      <span style="flex:1"></span>
+      <button id="btn-group-create" onclick="createGroupFromSelection()">Group</button>
+      <button class="gclear" onclick="clearGroupSelection()">Clear</button>
+    </div>
+    <div class="parts-list" id="parts-list">
+      <div class="no-parts">No file loaded.<br>Open a .stp or .step file.</div>
+    </div>
+  </div>
+
+  <!-- CENTER: Viewport -->
+  <div class="viewport" id="viewport">
+    <canvas id="canvas" tabindex="0"></canvas>
+
+    <!-- Drop Overlay -->
+    <div class="drop-overlay" id="drop-overlay">
+      <div class="drop-icon-wrap">
+        <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+      </div>
+      <div class="drop-title">STP / STEP Viewer</div>
+      <div class="drop-sub">Drag &amp; drop your file here<br>or click the button below</div>
+      <button class="drop-cta" onclick="document.getElementById('file-input').click()">Browse File</button>
+      <div class="drop-formats">SUPPORTED: .STP · .STEP</div>
+    </div>
+
+    <!-- Loading -->
+    <div class="loading-overlay gone" id="loading-overlay">
+      <div class="spinner"></div>
+      <div class="loading-msg" id="loading-msg">Initializing…</div>
+    </div>
+
+    <!-- Axis Gizmo -->
+    <canvas id="gizmo"></canvas>
+
+    <!-- Help Panel (bottom-left) -->
+    <div id="help-panel" onclick="this.classList.toggle('collapsed')">
+      <div class="help-header">
+        <span>Controls</span><span class="chev">▾</span>
+      </div>
+      <div class="help-body">
+        <div><span class="k">LMB</span>drag — Rotate (free)</div>
+        <div><span class="k">RMB</span>drag — Pan</div>
+        <div><span class="k">⇧</span>+<span class="k">LMB</span> — Pan</div>
+        <div><span class="k">2×</span>click — Set pivot</div>
+        <div><span class="k">⌇</span>scroll — Zoom to cursor</div>
+        <div><span class="k">Ctrl</span>+<span class="k">Z</span> — Undo</div>
+        <div style="margin-top:4px;padding-top:4px;border-top:1px dashed rgba(255,255,255,.08)">
+          <div><span class="k">●</span>click — Select part</div>
+          <div>🎨 Paint — click a face</div>
+          <div>📏 Measure — click 2 pts</div>
+          <div>✂ Section — slider cut</div>
+        </div>
+        <div style="margin-top:4px;padding-top:4px;border-top:1px dashed rgba(255,255,255,.08);color:var(--accent)">
+          <div style="font-weight:600;color:var(--accent);margin-bottom:2px">In Group Mode:</div>
+          <div><span class="k">LMB</span> — Toggle / box-drag</div>
+          <div><span class="k">Alt</span>+<span class="k">LMB</span> — Orbit</div>
+          <div><span class="k">⇧</span>+<span class="k">LMB</span> — Pan</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Coordinate display -->
+    <div id="coord-bar"></div>
+
+    <!-- Hover tooltip -->
+    <div class="tooltip" id="tooltip"></div>
+
+    <!-- Group-mode box-drag overlay -->
+    <div id="group-box" style="display:none;position:absolute;border:1px dashed var(--accent);
+         background:rgba(0,212,255,.10);pointer-events:none;z-index:6"></div>
+  </div>
+
+  <!-- RIGHT: Info + Measurements -->
+  <div class="right-panel">
+    <div class="rsec">
+      <div class="rsec-title">Model Info</div>
+      <div class="info-row"><span class="info-label">Parts</span><span class="info-val" id="i-parts">—</span></div>
+      <div class="info-row"><span class="info-label">Type</span><span class="info-val" id="i-type">—</span></div>
+      <div class="info-row"><span class="info-label">Triangles</span><span class="info-val" id="i-tris">—</span></div>
+      <div class="info-row"><span class="info-label">Vertices</span><span class="info-val" id="i-verts">—</span></div>
+    </div>
+
+    <div class="rsec">
+      <div class="rsec-title">Selection</div>
+      <div class="sel-box" id="sel-box">No part selected</div>
+    </div>
+
+    <div class="rsec" style="flex:1">
+      <div class="rsec-title">Measurements</div>
+      <div class="m-hint" id="m-hint">Enable Measure mode, then click two points on the model.</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:10.5px;color:var(--text-dim)">
+        <span style="flex-shrink:0">Ball size</span>
+        <input type="range" id="m-ball-size" min="0.2" max="4" step="0.1" value="1"
+          style="flex:1;accent-color:var(--accent);cursor:pointer"
+          oninput="setMeasureBallScale(this.value)">
+        <span id="m-ball-size-val" style="font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;width:26px;text-align:right">1.0×</span>
+      </div>
+      <div class="measure-list" id="measure-list" style="margin-top:8px"></div>
+      <div id="m-total" style="font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:11px;color:var(--text-dim);margin-top:4px"></div>
+    </div>
+
+    <div class="rsec" id="section-panel" style="display:none">
+      <div class="rsec-title">Section Cut</div>
+      <div style="display:flex;gap:4px;margin-bottom:8px">
+        <button class="btn active" id="sec-ax-X" onclick="setSectionAxis('X')" style="flex:1;justify-content:center;padding:4px 2px">X</button>
+        <button class="btn" id="sec-ax-Y" onclick="setSectionAxis('Y')" style="flex:1;justify-content:center;padding:4px 2px">Y</button>
+        <button class="btn" id="sec-ax-Z" onclick="setSectionAxis('Z')" style="flex:1;justify-content:center;padding:4px 2px">Z</button>
+        <button class="btn" id="sec-ax-F" onclick="setSectionAxis('F')" style="flex:1;justify-content:center;padding:4px 2px" title="Section parallel to a clicked face">Face</button>
+      </div>
+      <div id="sec-face-hint" style="display:none;font-size:10.5px;color:var(--accent2);margin-bottom:6px;line-height:1.4">Click a face on the model to align the cut plane.</div>
+      <div id="sec-face-info" style="display:none;font-size:10px;color:var(--text-dim);margin-bottom:6px;font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;line-height:1.35"></div>
+      <div style="margin-bottom:6px">
+        <input type="range" id="sec-slider" min="0" max="1000" value="500"
+          style="width:100%;accent-color:var(--accent);cursor:pointer"
+          oninput="onSectionSlider(this.value)">
+      </div>
+      <div class="sec-bounds">
+        <div class="sec-bound-row">
+          <span class="info-label">Min</span>
+          <input class="sec-bound-input" id="sec-min" type="number" step="any"
+                 onchange="onSectionBoundChange('min', this.value)"
+                 onkeydown="if(event.key==='Enter')this.blur()">
+        </div>
+        <div class="sec-bound-row">
+          <span class="info-label">Position</span>
+          <span class="info-val" id="sec-pos">0.000</span>
+        </div>
+        <div class="sec-bound-row">
+          <span class="info-label">Max</span>
+          <input class="sec-bound-input" id="sec-max" type="number" step="any"
+                 onchange="onSectionBoundChange('max', this.value)"
+                 onkeydown="if(event.key==='Enter')this.blur()">
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;margin-top:6px">
+        <button class="btn" id="btn-sec-flip" onclick="flipSection()" style="flex:1;justify-content:center">
+          <svg viewBox="0 0 24 24" style="width:11px;height:11px"><polyline points="17 1 21 5 17 9"/><polyline points="7 23 3 19 7 15"/><line x1="21" y1="5" x2="9" y2="5"/><line x1="3" y1="19" x2="15" y2="19"/></svg>Flip
+        </button>
+        <button class="btn" onclick="resetSection()" style="flex:1;justify-content:center">Center</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Classic (non-module) scripts: work from file:// without CORS issues -->
+<script src="./vendor/three.min.js"></script>
+<script src="./vendor/OrbitControls.js"></script>
+
+<script>
+
+// ═══════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════
+let renderer, scene, camera, controls;
+let gridHelper;
+let parts = [];          // {mesh, name, color, visible, origMat}
+let selIdx = null;
+let wireMode = false;
+let ghostMode = false;
+let edgeMode = true;   // show edges by default — helps surface/shell models
+let measureMode = false;
+let minDistMode = false;
+let minDistPending = [];  // array of part indices (max 2)
+
+// ── GROUPS ─────────────────────────────────────
+// Each group: { id, name, partIndices: Set<number>, expanded: bool }
+// A part can be in at most ONE group. Group visibility is just a mass-toggle:
+// each member's individual eye icon remains independent.
+let groups = [];
+let groupIdSeq = 1;
+let groupMode = false;             // toggle: parts tree switches to selection mode
+let groupSelected = new Set();     // part indices currently checked
+let groupLastClickedIdx = null;    // anchor for Shift-click range
+let groupDragActive = false;       // mouse held → drag-sweep
+let groupDragMode = null;          // 'add' | 'remove' (decided on first row)
+let groupEditingId = null;         // when not null, "Group" button finishes editing this group
+
+// Box-drag (rubber-band) state — used in group mode for sweep-select in 3D
+let groupBoxActive = false;
+let groupBoxWasActive = false;
+let groupBoxStart = { x: 0, y: 0 };
+let groupBoxDragWasActive = false; // tells onPointerUp to skip click-toggle
+
+// Section cut state
+let sectionActive = false;
+let sectionAxis = 'X';  // X, Y, Z, or F
+let sectionFlip = false;
+let sectionPlane = null;
+let sectionRange = null; // { min, max } — current slider bounds; auto-set per axis, user-editable
+let sectionHelper = null;
+let sectionFaceNormal = null;   // THREE.Vector3 in world space (for 'F' mode)
+let sectionFacePoint = null;    // initial face pick point (world)
+let sectionFacePickMode = false; // waiting for user to click a face
+let modelBBox = null;    // bounding box of loaded model
+
+// Export state
+let originalStepText = null;
+let originalFileName = 'model';
+let mPending = [];       // pending measure points (max 1)
+let measurements = [];   // {id, p1, p2, dist, line}
+let mCount = 0;
+let occtReady = false;
+let occtModule = null;
+
+// Colours for parts without explicit STEP colour
+const PALETTE = [
+  0x4a9edd,0x7b68ee,0x50c878,0xff7f50,0x40e0d0,
+  0xffd700,0xff9f40,0xa8d8a8,0xdda0dd,0x87cefa,
+  0xe8a0bf,0x80ced6,0xf9c74f,0x90be6d,0xf8961e,
+];
+
+// ═══════════════════════════════════════
+//  INIT THREE.JS
+// ═══════════════════════════════════════
+function initThree() {
+  const canvas = document.getElementById('canvas');
+  const vp = document.getElementById('viewport');
+
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x0c0c10, 1);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.localClippingEnabled = true;
+
+  scene = new THREE.Scene();
+  // Fog density is adjusted dynamically in fitToView() based on model size,
+  // so the model itself never fades to background. This initial value is for
+  // the empty grid before any model loads.
+  scene.fog = new THREE.FogExp2(0x0c0c10, 0.0008);
+
+  // Grid
+  gridHelper = new THREE.GridHelper(1000, 80, 0x1c1c2c, 0x171724);
+  scene.add(gridHelper);
+
+  // Lights
+  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+  const d1 = new THREE.DirectionalLight(0xffffff, 0.85);
+  d1.position.set(200, 400, 200);
+  d1.castShadow = true;
+  scene.add(d1);
+  const d2 = new THREE.DirectionalLight(0x6688aa, 0.35);
+  d2.position.set(-200, -100, -200);
+  scene.add(d2);
+  scene.add(new THREE.HemisphereLight(0x8899bb, 0x223344, 0.25));
+
+  // Camera
+  camera = new THREE.PerspectiveCamera(45, 1, 0.001, 100000);
+  camera.position.set(5, 5, 10);
+
+  // Controls
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.07;
+  controls.rotateSpeed = 0.8;
+  controls.zoomToCursor = true;           // wheel zooms toward cursor, not target
+  controls.screenSpacePanning = true;     // pan in view plane (CAD-friendly)
+  controls.minDistance = 0.001;
+  controls.maxDistance = 50000;
+  controls.mouseButtons = {
+    LEFT: null,                 // left button handled by custom free-rotate
+    MIDDLE: THREE.MOUSE.DOLLY,
+    RIGHT: THREE.MOUSE.PAN
+  };
+  controls.touches = {
+    ONE: THREE.TOUCH.ROTATE,
+    TWO: THREE.TOUCH.DOLLY_PAN
+  };
+
+  // Resize
+  const ro = new ResizeObserver(doResize);
+  ro.observe(vp);
+  doResize();
+
+  // Events — use pointerdown/pointerup for click detection
+  // (OrbitControls can block native 'click' events in some browsers)
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('mousemove', onMove);
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('dblclick', onDoubleClick);
+
+  // Group-mode 3D box-drag: separate listeners that activate only when
+  // group mode is on and modifier keys aren't held (Alt = orbit, Shift = pan).
+  canvas.addEventListener('pointerdown', onGroupBoxDown);
+  window.addEventListener('pointermove', onGroupBoxMove);
+  window.addEventListener('pointerup', onGroupBoxUp);
+
+  // Shift+Left = Pan. Swap LEFT button between null (free-rotate owns it)
+  // and PAN while Shift is held.
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Shift') controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+  });
+  window.addEventListener('keyup', e => {
+    if (e.key === 'Shift') controls.mouseButtons.LEFT = null;
+  });
+
+  animate();
+}
+
+function doResize() {
+  const vp = document.getElementById('viewport');
+  const w = vp.clientWidth, h = vp.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+
+// ═══════════════════════════════════════
+//  ANIMATION LOOP
+// ═══════════════════════════════════════
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+  drawGizmo();
+}
+
+// ═══════════════════════════════════════
+//  RAYCASTING HELPERS
+// ═══════════════════════════════════════
+const raycaster = new THREE.Raycaster();
+const mouse2D = new THREE.Vector2();
+
+function toNDC(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse2D.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+  mouse2D.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+}
+
+function getHit(e) {
+  toNDC(e);
+  raycaster.setFromCamera(mouse2D, camera);
+  const visibleMeshes = parts.filter(p => p.visible).map(p => p.mesh);
+  const hits = raycaster.intersectObjects(visibleMeshes, false);
+  return hits.length ? hits[0] : null;
+}
+
+// ═══════════════════════════════════════
+//  MOUSE EVENTS
+// ═══════════════════════════════════════
+function onMove(e) {
+  if (!parts.length) return;
+  const hit = getHit(e);
+  const bar = document.getElementById('coord-bar');
+  if (hit) {
+    const p = hit.point;
+    bar.style.display = 'block';
+    bar.textContent = `X ${p.x.toFixed(3)}  Y ${p.y.toFixed(3)}  Z ${p.z.toFixed(3)}`;
+    document.getElementById('canvas').style.cursor = measureMode ? 'crosshair' : 'pointer';
+  } else {
+    bar.style.display = 'none';
+    document.getElementById('canvas').style.cursor = measureMode ? 'crosshair' : 'default';
+  }
+}
+
+let dragStart = {x:0, y:0, t:0};
+
+// Double-click on the model to re-center the orbit pivot on that point.
+// Keeps camera position fixed, only moves controls.target, so subsequent
+// orbit/zoom revolves around the feature you just clicked.
+function onDoubleClick(e) {
+  if (!parts.length) return;
+  if (measureMode || minDistMode || sectionFacePickMode) return;
+  const hit = getHit(e);
+  if (!hit) return;
+  const newTarget = hit.point.clone();
+  const delta = newTarget.clone().sub(controls.target);
+  controls.target.copy(newTarget);
+  camera.position.add(delta); // preserve view direction & distance
+  controls.update();
+  // Brief visual confirmation via coord bar
+  const bar = document.getElementById('coord-bar');
+  bar.style.display = 'block';
+  bar.textContent = `⊕ Pivot set  X ${newTarget.x.toFixed(2)}  Y ${newTarget.y.toFixed(2)}  Z ${newTarget.z.toFixed(2)}`;
+}
+
+function onPointerDown(e) {
+  if (e.button !== 0) return; // left button only
+  dragStart = {x: e.clientX, y: e.clientY, t: Date.now()};
+
+  // ── GROUP MODE: LMB is for selection, not orbit ──
+  // Hold Alt to orbit while in group mode. Shift still pans (OrbitControls).
+  if (groupMode && !e.altKey && !e.shiftKey) {
+    // Let click-on-part be handled in pointerup; box-drag handler lives in
+    // canvas listeners we wired separately.
+    return;
+  }
+
+  // Begin quaternion free-rotate drag (unless Shift held — then OrbitControls pans)
+  if (!e.shiftKey) {
+    frDragging = true;
+    frPrev.x = e.clientX;
+    frPrev.y = e.clientY;
+    try { canvas.setPointerCapture(e.pointerId); } catch {}
+  }
+}
+
+// ── FREE ROTATE (trackball quaternion, no gimbal wall) ────────
+// Always on. Left-drag rotates freely around the current pivot
+// using camera-local axes so the model never hits a pole.
+let frDragging = false;
+const frPrev   = { x: 0, y: 0 };
+
+function onFreeRotateMove(e) {
+  if (!frDragging) return;
+  const dx = e.clientX - frPrev.x;
+  const dy = e.clientY - frPrev.y;
+  frPrev.x = e.clientX;
+  frPrev.y = e.clientY;
+  if (dx === 0 && dy === 0) return;
+
+  const speed = 0.005 * (controls.rotateSpeed || 1);
+  const target = controls.target;
+  const offset = camera.position.clone().sub(target);
+
+  // Camera's own local axes — rotation always feels aligned with the view
+  const xAxis = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+  const yAxis = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+
+  const qYaw   = new THREE.Quaternion().setFromAxisAngle(yAxis, -dx * speed);
+  const qPitch = new THREE.Quaternion().setFromAxisAngle(xAxis, -dy * speed);
+  const q = qYaw.multiply(qPitch);
+
+  offset.applyQuaternion(q);
+  camera.up.applyQuaternion(q);          // keep up vector consistent, no pole lock
+  camera.position.copy(target).add(offset);
+  camera.lookAt(target);
+}
+
+function onFreeRotateUp(e) {
+  if (!frDragging) return;
+  frDragging = false;
+  try { canvas.releasePointerCapture(e.pointerId); } catch {}
+}
+
+// Attach free-rotate listeners
+window.addEventListener('load', () => {
+  const cv = document.getElementById('canvas');
+  if (!cv) return;
+  cv.addEventListener('pointermove', onFreeRotateMove);
+  cv.addEventListener('pointerup',   onFreeRotateUp);
+  cv.addEventListener('pointercancel', onFreeRotateUp);
+});
+
+// ═══════════════════════════════════════
+//  UNDO STACK  (general-purpose)
+// ═══════════════════════════════════════
+const undoStack = [];
+const UNDO_MAX  = 50;
+
+function pushUndo(entry) {
+  undoStack.push(entry);
+  if (undoStack.length > UNDO_MAX) undoStack.shift();
+}
+
+function doUndo() {
+  const entry = undoStack.pop();
+  if (!entry) return;
+  try { entry.undo(); } catch (err) { console.error('Undo failed:', err); }
+  // Brief confirmation in the coord bar
+  const bar = document.getElementById('coord-bar');
+  bar.style.display = 'block';
+  bar.textContent = '↶ Undo: ' + entry.label;
+  clearTimeout(doUndo._t);
+  doUndo._t = setTimeout(() => { bar.style.display = 'none'; }, 1200);
+}
+
+window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    e.preventDefault();
+    doUndo();
+  }
+});
+
+// ═══════════════════════════════════════
+//  PAINT MODE  (flood-fill coplanar triangles, overlay mesh)
+// ═══════════════════════════════════════
+let paintMode = false;
+let paintColor = '#ff3b3b';
+const PAINT_ANGLE_TOL_DEG = 5;           // neighbor coplanarity tolerance
+const paintCache    = new Map();         // mesh -> { triNormals, adj }
+const paintOverlays = new Map();         // mesh -> { triColors: Map<triIdx,hex>, overlay: Mesh }
+
+function buildTriAdjacency(geo) {
+  const pos   = geo.attributes.position;
+  const index = geo.index;
+  const triCount = index ? index.count / 3 : pos.count / 3;
+
+  // Quantize vertex positions so duplicated verts match up on shared edges
+  const Q = 1e4;
+  const key = (x,y,z) => `${Math.round(x*Q)},${Math.round(y*Q)},${Math.round(z*Q)}`;
+
+  const triNormals = new Float32Array(triCount * 3);
+  const edgeMap = new Map();
+  const adj = new Array(triCount);
+  for (let i = 0; i < triCount; i++) adj[i] = [];
+
+  const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), n = new THREE.Vector3();
+  const getV = (triVert, out) => {
+    const idx = index ? index.getX(triVert) : triVert;
+    out.fromBufferAttribute(pos, idx);
+  };
+  const addEdge = (k1, k2, t) => {
+    const ek = k1 < k2 ? k1 + '|' + k2 : k2 + '|' + k1;
+    let arr = edgeMap.get(ek);
+    if (!arr) { arr = []; edgeMap.set(ek, arr); }
+    arr.push(t);
+  };
+
+  for (let t = 0; t < triCount; t++) {
+    getV(t*3,   vA);
+    getV(t*3+1, vB);
+    getV(t*3+2, vC);
+    e1.subVectors(vB, vA);
+    e2.subVectors(vC, vA);
+    n.crossVectors(e1, e2);
+    const len = n.length() || 1;
+    triNormals[t*3]   = n.x/len;
+    triNormals[t*3+1] = n.y/len;
+    triNormals[t*3+2] = n.z/len;
+    const k0 = key(vA.x, vA.y, vA.z);
+    const k1 = key(vB.x, vB.y, vB.z);
+    const k2 = key(vC.x, vC.y, vC.z);
+    addEdge(k0, k1, t);
+    addEdge(k1, k2, t);
+    addEdge(k2, k0, t);
+  }
+
+  for (const tris of edgeMap.values()) {
+    if (tris.length < 2) continue;
+    for (let i = 0; i < tris.length; i++) {
+      for (let j = i + 1; j < tris.length; j++) {
+        adj[tris[i]].push(tris[j]);
+        adj[tris[j]].push(tris[i]);
+      }
+    }
+  }
+  return { triNormals, adj, triCount };
+}
+
+function paintFloodFill(mesh, startTri) {
+  let cache = paintCache.get(mesh);
+  if (!cache) {
+    cache = buildTriAdjacency(mesh.geometry);
+    paintCache.set(mesh, cache);
+  }
+  const { triNormals, adj } = cache;
+  const cosTol = Math.cos(PAINT_ANGLE_TOL_DEG * Math.PI / 180);
+
+  // Progressive comparison: each step checks angle against its *neighbor*,
+  // so smoothly curved surfaces (cylinders, fillets) fill naturally.
+  const visited = new Set([startTri]);
+  const out     = [startTri];
+  const stack   = [startTri];
+  while (stack.length) {
+    const t = stack.pop();
+    const tx = triNormals[t*3], ty = triNormals[t*3+1], tz = triNormals[t*3+2];
+    const nbs = adj[t];
+    for (let i = 0; i < nbs.length; i++) {
+      const nb = nbs[i];
+      if (visited.has(nb)) continue;
+      const nx = triNormals[nb*3], ny = triNormals[nb*3+1], nz = triNormals[nb*3+2];
+      if (tx*nx + ty*ny + tz*nz < cosTol) continue;
+      visited.add(nb);
+      out.push(nb);
+      stack.push(nb);
+    }
+  }
+  return out;
+}
+
+function rebuildPaintOverlay(mesh) {
+  const ov = paintOverlays.get(mesh);
+  if (!ov) return;
+  if (ov.overlay) {
+    scene.remove(ov.overlay);
+    ov.overlay.geometry.dispose();
+    ov.overlay.material.dispose();
+    ov.overlay = null;
+  }
+  if (ov.triColors.size === 0) return;
+
+  const geo   = mesh.geometry;
+  const pos   = geo.attributes.position;
+  const index = geo.index;
+  const count = ov.triColors.size;
+  const positions = new Float32Array(count * 9);
+  const colors    = new Float32Array(count * 9);
+
+  const v = new THREE.Vector3();
+  const c = new THREE.Color();
+  const getV = (triVert, out) => {
+    const idx = index ? index.getX(triVert) : triVert;
+    out.fromBufferAttribute(pos, idx);
+  };
+
+  let k = 0;
+  for (const [tri, hex] of ov.triColors) {
+    c.set(hex);
+    for (let vi = 0; vi < 3; vi++) {
+      getV(tri*3 + vi, v);
+      positions[k*9 + vi*3]     = v.x;
+      positions[k*9 + vi*3 + 1] = v.y;
+      positions[k*9 + vi*3 + 2] = v.z;
+      colors[k*9 + vi*3]        = c.r;
+      colors[k*9 + vi*3 + 1]    = c.g;
+      colors[k*9 + vi*3 + 2]    = c.b;
+    }
+    k++;
+  }
+
+  const og = new THREE.BufferGeometry();
+  og.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  og.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+  const om = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.78,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits:  -2,
+  });
+  const overlayMesh = new THREE.Mesh(og, om);
+  mesh.updateMatrixWorld(true);
+  overlayMesh.matrix.copy(mesh.matrixWorld);
+  overlayMesh.matrixAutoUpdate = false;
+  overlayMesh.renderOrder = 999;
+  scene.add(overlayMesh);
+  ov.overlay = overlayMesh;
+}
+
+function handlePaintClick(hit) {
+  if (!hit || !hit.face || hit.faceIndex == null) return;
+  const mesh = hit.object;
+  const fill = paintFloodFill(mesh, hit.faceIndex);
+  let ov = paintOverlays.get(mesh);
+  if (!ov) {
+    ov = { triColors: new Map(), overlay: null };
+    paintOverlays.set(mesh, ov);
+  }
+  // Record previous state of each touched triangle so undo can restore it
+  // (important when painting over an already-painted face with a new color)
+  const prev = [];
+  for (const t of fill) {
+    prev.push([t, ov.triColors.has(t) ? ov.triColors.get(t) : null]);
+    ov.triColors.set(t, paintColor);
+  }
+  rebuildPaintOverlay(mesh);
+
+  pushUndo({
+    label: 'Paint stroke',
+    undo: () => {
+      const ov2 = paintOverlays.get(mesh);
+      if (!ov2) return;
+      for (const [t, prevHex] of prev) {
+        if (prevHex === null) ov2.triColors.delete(t);
+        else ov2.triColors.set(t, prevHex);
+      }
+      rebuildPaintOverlay(mesh);
+    }
+  });
+}
+
+window.togglePaint = () => {
+  paintMode = !paintMode;
+  document.getElementById('btn-paint').classList.toggle('active', paintMode);
+  document.getElementById('paint-swatches').style.display   = paintMode ? 'flex' : 'none';
+  document.getElementById('btn-paint-clear').style.display  = paintMode ? 'inline-flex' : 'none';
+  document.getElementById('canvas').style.cursor = paintMode ? 'crosshair' : 'default';
+  // Turn off conflicting modes
+  if (paintMode) {
+    if (typeof measureMode !== 'undefined' && measureMode) toggleMeasure();
+    if (typeof minDistMode  !== 'undefined' && minDistMode)  toggleMinDist();
+  }
+};
+
+window.clearPaint = () => {
+  if (paintOverlays.size === 0) return;
+  // Snapshot all paint state so Ctrl+Z can restore it in one step
+  const snapshot = [];
+  for (const [mesh, ov] of paintOverlays) {
+    snapshot.push([mesh, new Map(ov.triColors)]);
+  }
+  for (const [mesh, ov] of paintOverlays) {
+    if (ov.overlay) {
+      scene.remove(ov.overlay);
+      ov.overlay.geometry.dispose();
+      ov.overlay.material.dispose();
+    }
+  }
+  paintOverlays.clear();
+
+  pushUndo({
+    label: 'Clear paint',
+    undo: () => {
+      for (const [mesh, triColors] of snapshot) {
+        paintOverlays.set(mesh, { triColors: new Map(triColors), overlay: null });
+        rebuildPaintOverlay(mesh);
+      }
+    }
+  });
+};
+
+// Swatch click handlers
+window.addEventListener('load', () => {
+  document.querySelectorAll('#paint-swatches .swatch').forEach(btn => {
+    btn.addEventListener('click', () => {
+      paintColor = btn.dataset.color;
+      document.querySelectorAll('#paint-swatches .swatch').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+});
+
+function onPointerUp(e) {
+  if (e.button !== 0) return; // left button only
+
+  // Group mode: ALL left-click/drag handling lives in onGroupBoxUp.
+  // (Alt-click for orbit ends here without selection action.)
+  if (groupMode && !e.altKey && !e.shiftKey) return;
+
+  const dx = Math.abs(e.clientX - dragStart.x);
+  const dy = Math.abs(e.clientY - dragStart.y);
+  const dt = Date.now() - dragStart.t;
+  if (dx > 5 || dy > 5 || dt > 400) return; // was a drag or long press
+
+  const hit = getHit(e);
+
+  // Paint mode
+  if (paintMode) {
+    if (hit) handlePaintClick(hit);
+    return;
+  }
+
+  // Section face-pick mode takes priority over everything else
+  if (sectionFacePickMode) {
+    if (hit && hit.face) {
+      handleSectionFacePick(hit);
+    } else {
+      document.getElementById('sec-face-hint').textContent = 'No face hit — click ON the model.';
+    }
+    return;
+  }
+
+  if (measureMode) {
+    if (hit) {
+      handleMeasureClick(e, hit.point.clone());
+    } else if (mPending.length > 0) {
+      cleanupPendingMeasure();
+      document.getElementById('m-hint').textContent = 'Cancelled. Click Point 1 on the model…';
+    }
+    return;
+  }
+
+  if (minDistMode) {
+    if (hit) {
+      const idx = parts.findIndex(p => p.mesh === hit.object);
+      if (idx !== -1) handleMinDistPick(idx);
+    } else if (minDistPending.length > 0) {
+      clearMinDistPending();
+      document.getElementById('m-hint').textContent = 'Cancelled. Click Part 1…';
+    }
+    return;
+  }
+
+  if (hit) {
+    handleSelectClick(hit.object);
+  } else {
+    deselectPart();
+  }
+}
+
+// ═══════════════════════════════════════
+//  PART SELECTION
+// ═══════════════════════════════════════
+function handleSelectClick(mesh) {
+  const idx = parts.findIndex(p => p.mesh === mesh);
+  if (idx === -1) return;
+
+  if (selIdx === idx) {
+    deselectPart();
+    return;
+  }
+  deselectPart();
+  selIdx = idx;
+  const p = parts[idx];
+
+  // Highlight
+  const hl = p.origMat.clone();
+  hl.emissive = new THREE.Color(0x003355);
+  hl.emissiveIntensity = 1;
+  p.mesh.material = hl;
+
+  document.querySelectorAll('.part-item').forEach((el, i) => {
+    el.classList.toggle('selected', i === idx);
+  });
+
+  document.getElementById('sel-box').innerHTML = `
+    <div class="sel-name">${p.name}</div>
+    <div class="sel-color-row">
+      <div class="sel-swatch" style="background:${p.color}"></div>
+      <span class="sel-hex">${p.color.toUpperCase()}</span>
+      <span style="font-size:9px;color:${p.isSurface ? 'var(--accent)' : 'var(--green)'};margin-left:auto">${p.isSurface ? 'SURFACE' : 'SOLID'}</span>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);margin-top:6px">
+      Verts: ${p.mesh.geometry.attributes.position.count.toLocaleString()}
+    </div>`;
+}
+
+function deselectPart() {
+  if (selIdx === null) return;
+  parts[selIdx].mesh.material = parts[selIdx].origMat;
+  document.querySelectorAll('.part-item').forEach(el => el.classList.remove('selected'));
+  selIdx = null;
+  document.getElementById('sel-box').textContent = 'No part selected';
+}
+
+// ═══════════════════════════════════════
+//  MEASUREMENT
+// ═══════════════════════════════════════
+const mDots = [];
+
+function handleMeasureClick(e, point) {
+  mPending.push(point);
+  spawnDot(e.clientX, e.clientY);
+
+  const sphereR = getMeasureBallRadius();
+
+  if (mPending.length === 1) {
+    // Place a temporary 3D sphere at Point 1 so user can see it
+    const sg = new THREE.SphereGeometry(sphereR, 12, 12);
+    const sm = new THREE.MeshBasicMaterial({ color: 0xffcc00, clippingPlanes: [] });
+    const tempSphere = new THREE.Mesh(sg, sm);
+    tempSphere.position.copy(point);
+    scene.add(tempSphere);
+    mPending.tempSphere = tempSphere;
+
+    document.getElementById('m-hint').innerHTML =
+      '<span style="color:var(--accent2)">● Point 1 set</span> — now click Point 2 on model.';
+  } else {
+    // Remove temp sphere
+    if (mPending.tempSphere) {
+      scene.remove(mPending.tempSphere);
+      mPending.tempSphere.geometry.dispose();
+    }
+
+    const p1 = mPending[0], p2 = mPending[1];
+    const dist = p1.distanceTo(p2);
+    const ddx = Math.abs(p2.x - p1.x);
+    const ddy = Math.abs(p2.y - p1.y);
+    const ddz = Math.abs(p2.z - p1.z);
+    const id = ++mCount;
+
+    // 3D line
+    const geo = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+    const mat = new THREE.LineBasicMaterial({ color: 0xff6b35, linewidth: 2, clippingPlanes: [] });
+    const line = new THREE.Line(geo, mat);
+    scene.add(line);
+
+    // Endpoint spheres
+    [p1, p2].forEach(pt => {
+      const sg = new THREE.SphereGeometry(sphereR, 12, 12);
+      const sm = new THREE.MeshBasicMaterial({ color: 0xff6b35, clippingPlanes: [] });
+      const s = new THREE.Mesh(sg, sm);
+      s.position.copy(pt);
+      scene.add(s);
+      line.userData.spheres = line.userData.spheres || [];
+      line.userData.spheres.push(s);
+    });
+
+    measurements.push({ id, p1, p2, dist, dx: ddx, dy: ddy, dz: ddz, line });
+    mPending = [];
+    clearDots();
+    renderMeasures();
+    document.getElementById('m-hint').textContent = 'Click Point 1 for next measurement.';
+
+    // Undo entry — removes the line, its spheres, and the list row
+    const addedId = id;
+    pushUndo({
+      label: 'Add measurement',
+      undo: () => {
+        const i = measurements.findIndex(m => m.id === addedId);
+        if (i === -1) return;
+        const m = measurements[i];
+        scene.remove(m.line);
+        m.line.geometry.dispose();
+        m.line.material.dispose();
+        (m.line.userData.spheres || []).forEach(s => {
+          scene.remove(s);
+          s.geometry.dispose();
+          s.material.dispose();
+        });
+        measurements.splice(i, 1);
+        renderMeasures();
+      }
+    });
+  }
+}
+
+// ── Measurement ball sizing ──────────────────────────────────
+// Auto radius derives from model size; user slider multiplies it.
+let measureBallScale = 1.0;
+function getMeasureBallRadius() {
+  let base = 0.3;
+  if (modelBBox) {
+    const sz = modelBBox.getSize(new THREE.Vector3());
+    base = Math.max(sz.x, sz.y, sz.z) * 0.003;
+  }
+  return base * measureBallScale;
+}
+
+window.setMeasureBallScale = (val) => {
+  measureBallScale = parseFloat(val);
+  document.getElementById('m-ball-size-val').textContent = measureBallScale.toFixed(1) + '×';
+
+  const newR = getMeasureBallRadius();
+
+  // Resize pending (in-progress) point-1 sphere
+  if (mPending.tempSphere) {
+    mPending.tempSphere.geometry.dispose();
+    mPending.tempSphere.geometry = new THREE.SphereGeometry(newR, 12, 12);
+  }
+
+  // Resize every existing measurement's endpoint spheres
+  measurements.forEach(m => {
+    const spheres = m.line && m.line.userData && m.line.userData.spheres;
+    if (!spheres) return;
+    spheres.forEach(s => {
+      s.geometry.dispose();
+      s.geometry = new THREE.SphereGeometry(newR, 12, 12);
+    });
+  });
+};
+
+function spawnDot(cx, cy) {
+  const vp = document.getElementById('viewport');
+  const r = vp.getBoundingClientRect();
+  const d = document.createElement('div');
+  d.className = 'm-dot';
+  d.style.left = (cx - r.left) + 'px';
+  d.style.top = (cy - r.top) + 'px';
+  vp.appendChild(d);
+  mDots.push(d);
+}
+
+function clearDots() { mDots.forEach(d => d.remove()); mDots.length = 0; }
+
+function cleanupPendingMeasure() {
+  if (mPending.tempSphere) {
+    scene.remove(mPending.tempSphere);
+    mPending.tempSphere.geometry.dispose();
+  }
+  mPending = [];
+  clearDots();
+}
+
+function renderMeasures() {
+  const list = document.getElementById('measure-list');
+  list.innerHTML = measurements.map(m => {
+    const tag = m.tag || `M${m.id}`;
+    const label = m.label
+      ? `<div style="font-size:9.5px;color:var(--text-dim);margin-top:3px;word-break:break-all;line-height:1.35">${m.label}</div>`
+      : '';
+    return `
+    <div class="m-item" style="flex-direction:column;align-items:stretch;gap:3px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div class="m-tag">${tag}</div>
+          <div class="m-val">${m.dist.toFixed(3)}</div>
+        </div>
+        <button class="m-del" onclick="delMeasure(${m.id})" title="Delete">✕</button>
+      </div>
+      <div style="display:flex;gap:6px;font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:9.5px;color:var(--text-dim)">
+        <span style="color:#ff5555">ΔX ${(m.dx||0).toFixed(2)}</span>
+        <span style="color:#55ff55">ΔY ${(m.dy||0).toFixed(2)}</span>
+        <span style="color:#5599ff">ΔZ ${(m.dz||0).toFixed(2)}</span>
+      </div>
+      ${label}
+    </div>`;
+  }).join('');
+
+  const total = measurements.reduce((s, m) => s + m.dist, 0);
+  document.getElementById('m-total').textContent = measurements.length > 1
+    ? `Total: ${total.toFixed(3)}` : '';
+}
+
+window.delMeasure = (id) => {
+  const idx = measurements.findIndex(m => m.id === id);
+  if (idx === -1) return;
+  const m = measurements[idx];
+  scene.remove(m.line);
+  (m.line.userData.spheres || []).forEach(s => scene.remove(s));
+  (m.line.userData.extras || []).forEach(o => {
+    scene.remove(o);
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) o.material.dispose();
+  });
+  measurements.splice(idx, 1);
+  renderMeasures();
+};
+
+// ═══════════════════════════════════════
+//  LOAD STEP FILE
+// ═══════════════════════════════════════
+async function loadFile(file) {
+  showLoad('Initializing OCCT engine…');
+
+  try {
+    // Dynamically load occt-import-js once
+    if (!occtModule) {
+      if (!window.occtimportjs) {
+        await loadScript('./vendor/occt-import-js.js');
+      }
+      showLoad('Loading WebAssembly module…');
+
+      // Brave/Chrome block fetch() on file:// origins, so we can't let
+      // occt-import-js fetch its .wasm. Instead we pre-load the wasm as a
+      // base64 string via a classic <script> (window.OCCT_WASM_BASE64) and
+      // pass it in as wasmBinary — Emscripten skips the fetch when this is set.
+      if (!window.OCCT_WASM_BASE64) {
+        await loadScript('./vendor/occt-wasm-b64.js');
+      }
+      const b64 = window.OCCT_WASM_BASE64;
+      const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+      occtModule = await window.occtimportjs({
+        wasmBinary: bin,
+        locateFile: f => `./vendor/${f}`
+      });
+    }
+
+    showLoad(`Parsing: ${file.name}`);
+    const buf = await file.arrayBuffer();
+    const result = occtModule.ReadStepFile(new Uint8Array(buf), null);
+
+    // Store original file for export
+    originalStepText = new TextDecoder().decode(buf);
+    originalFileName = file.name.replace(/\.(stp|step)$/i, '');
+
+    if (!result.success || !result.meshes || !result.meshes.length) {
+      console.error('STEP parse result:', JSON.stringify(result, null, 2).slice(0, 2000));
+      throw new Error('STEP parse failed — no geometry found. The file may contain only curves/wireframes not supported for 3D viewing.');
+    }
+
+    console.log(`STEP parsed: ${result.meshes.length} meshes, first mesh keys:`, result.meshes[0] ? Object.keys(result.meshes[0]) : 'N/A');
+
+    showLoad('Building geometry…');
+    clearScene();
+
+    let totalTris = 0, totalVerts = 0;
+    let hasSolid = false;
+
+    result.meshes.forEach((mesh, idx) => {
+      // Skip meshes without position data
+      if (!mesh.attributes || !mesh.attributes.position || !mesh.attributes.position.array || !mesh.attributes.position.array.length) {
+        console.warn(`Skipping mesh ${idx}: no position data`);
+        return;
+      }
+
+      const geo = new THREE.BufferGeometry();
+
+      // occt-import-js returns three.js-compatible attribute structure
+      const posArr = mesh.attributes.position.array;
+      const vc = posArr.length / 3;
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(posArr), 3));
+
+      const hasNormals = mesh.attributes.normal && mesh.attributes.normal.array && mesh.attributes.normal.array.length;
+      if (hasNormals) {
+        geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(mesh.attributes.normal.array), 3));
+      }
+
+      const hasIndex = mesh.index && mesh.index.array && mesh.index.array.length;
+      if (hasIndex) {
+        geo.setIndex(new THREE.BufferAttribute(new Uint32Array(mesh.index.array), 1));
+      }
+
+      // Compute normals if missing — needs index for good results
+      if (!hasNormals) {
+        if (hasIndex) {
+          geo.computeVertexNormals();
+        } else {
+          // Non-indexed: build flat normals manually
+          const norArr = new Float32Array(posArr.length);
+          for (let i = 0; i < vc; i += 3) {
+            const ax = posArr[(i)*3], ay = posArr[(i)*3+1], az = posArr[(i)*3+2];
+            const bx = posArr[(i+1)*3], by = posArr[(i+1)*3+1], bz = posArr[(i+1)*3+2];
+            const cx = posArr[(i+2)*3], cy = posArr[(i+2)*3+1], cz = posArr[(i+2)*3+2];
+            let nx = (by-ay)*(cz-az)-(bz-az)*(cy-ay);
+            let ny = (bz-az)*(cx-ax)-(bx-ax)*(cz-az);
+            let nz = (bx-ax)*(cy-ay)-(by-ay)*(cx-ax);
+            const len = Math.sqrt(nx*nx+ny*ny+nz*nz) || 1;
+            nx /= len; ny /= len; nz /= len;
+            for (let j = 0; j < 3; j++) {
+              norArr[(i+j)*3] = nx; norArr[(i+j)*3+1] = ny; norArr[(i+j)*3+2] = nz;
+            }
+          }
+          geo.setAttribute('normal', new THREE.BufferAttribute(norArr, 3));
+        }
+      }
+
+      // Detect if this is a thin/surface mesh by checking bounding box flatness
+      geo.computeBoundingBox();
+      const bsz = geo.boundingBox.getSize(new THREE.Vector3());
+      const dims = [bsz.x, bsz.y, bsz.z].sort((a,b) => a - b);
+      const isSurface = dims[2] > 0 ? (dims[0] < dims[2] * 0.01) : true; // thinnest dim < 1% of largest
+      if (!isSurface) hasSolid = true;
+
+      let col;
+      const fc = mesh.color;
+      if (fc && Array.isArray(fc) && fc.length >= 3 && (fc[0] + fc[1] + fc[2]) > 0.01) {
+        col = new THREE.Color(fc[0], fc[1], fc[2]);
+      } else {
+        col = new THREE.Color(PALETTE[idx % PALETTE.length]);
+      }
+
+      const mat = new THREE.MeshPhongMaterial({
+        color: col, specular: new THREE.Color(0x1a1a2a),
+        shininess: 55, side: THREE.DoubleSide,
+      });
+
+      // For surface-only parts, add slight emissive so they're visible from any angle
+      if (isSurface) {
+        mat.emissive = col.clone().multiplyScalar(0.15);
+        mat.emissiveIntensity = 1;
+      }
+
+      const m3 = new THREE.Mesh(geo, mat);
+      m3.castShadow = true;
+      m3.receiveShadow = true;
+      scene.add(m3);
+
+      // Edge lines — low angle for surfaces (show ALL edges), moderate for solids
+      const edgeAngle = isSurface ? 1 : 15;
+      const edgeGeo = new THREE.EdgesGeometry(geo, edgeAngle);
+      const edgeMat = new THREE.LineBasicMaterial({
+        color: isSurface ? col.clone().lerp(new THREE.Color(0xffffff), 0.5) : col.clone().multiplyScalar(0.55),
+        transparent: true,
+        opacity: isSurface ? 0.85 : 0.6
+      });
+      const edgeLine = new THREE.LineSegments(edgeGeo, edgeMat);
+      edgeLine.visible = edgeMode;
+      scene.add(edgeLine);
+
+      // For very thin/flat geometry, also add a wireframe overlay for extra visibility
+      let wireLine = null;
+      if (isSurface) {
+        const wireGeo = new THREE.WireframeGeometry(geo);
+        const wireMat = new THREE.LineBasicMaterial({
+          color: col.clone().lerp(new THREE.Color(0xffffff), 0.3),
+          transparent: true, opacity: 0.15
+        });
+        wireLine = new THREE.LineSegments(wireGeo, wireMat);
+        wireLine.visible = edgeMode;
+        scene.add(wireLine);
+      }
+
+      const hex = '#' + col.getHexString();
+      const name = mesh.name ? mesh.name : `Part ${idx + 1}`;
+      // origName preserves the name AS LOADED FROM STEP, so the STEP-filter
+      // export can still match this part to its PRODUCT entity even after
+      // the user renames the part in the UI.
+      parts.push({ mesh: m3, edges: edgeLine, wire: wireLine, name, origName: name, color: hex, visible: true, origMat: mat, isSurface });
+
+      totalTris += (hasIndex ? mesh.index.array.length : posArr.length / 3) / 3;
+      totalVerts += vc;
+    });
+
+    if (!parts.length) {
+      throw new Error('No renderable geometry found in the STEP file.');
+    }
+
+    document.getElementById('i-parts').textContent = parts.length;
+    document.getElementById('i-tris').textContent  = Math.round(totalTris).toLocaleString();
+    document.getElementById('i-verts').textContent = totalVerts.toLocaleString();
+    document.getElementById('part-count').textContent = parts.length;
+
+    const surfCount = parts.filter(p => p.isSurface).length;
+    document.getElementById('i-type').textContent = surfCount === 0 ? 'Solid'
+      : surfCount === parts.length ? 'Surface' : `Mixed (${surfCount} srf)`;
+
+    buildPartsList();
+    document.getElementById('drop-overlay').classList.add('gone');
+
+    // Compute model bounding box for measure scaling & section cut
+    modelBBox = new THREE.Box3();
+    parts.forEach(p => modelBBox.expandByObject(p.mesh));
+
+    // Reset section cut if active
+    if (sectionActive) {
+      updateSectionPlane();
+      document.getElementById('sec-slider').value = 500;
+    }
+
+    // Auto-fit on load: defer one frame so ResizeObserver and matrices settle,
+    // and use a clean iso angle regardless of previous camera state.
+    requestAnimationFrame(() => fitToView(true));
+
+  } catch (err) {
+    console.error(err);
+    alert('⚠ Error loading file:\n' + err.message);
+  } finally {
+    hideLoad();
+  }
+}
+
+function clearScene() {
+  // Wipe the undo stack — old entries point at meshes that are about to die
+  undoStack.length = 0;
+
+  // Wipe any paint overlays + adjacency cache tied to the old meshes
+  for (const [mesh, ov] of paintOverlays) {
+    if (ov.overlay) {
+      scene.remove(ov.overlay);
+      ov.overlay.geometry.dispose();
+      ov.overlay.material.dispose();
+    }
+  }
+  paintOverlays.clear();
+  paintCache.clear();
+
+  parts.forEach(p => {
+    scene.remove(p.mesh); p.mesh.geometry.dispose();
+    if (p.edges) { scene.remove(p.edges); p.edges.geometry.dispose(); }
+    if (p.wire) { scene.remove(p.wire); p.wire.geometry.dispose(); }
+  });
+  measurements.forEach(m => {
+    scene.remove(m.line);
+    (m.line.userData.spheres || []).forEach(s => scene.remove(s));
+  });
+  removeSectionHelper();
+  modelBBox = null;
+  sectionRange = null;
+  cleanupPendingMeasure();
+  mPending = [];
+  measurements = [];
+  parts = [];
+  selIdx = null;
+  groups = [];
+  groupSelected.clear();
+  groupLastClickedIdx = null;
+  document.getElementById('measure-list').innerHTML = '';
+  document.getElementById('m-total').textContent = '';
+  document.getElementById('sel-box').textContent = 'No part selected';
+  document.getElementById('parts-list').innerHTML = '<div class="no-parts">Building parts…</div>';
+  ['i-parts','i-type','i-tris','i-verts'].forEach(id => document.getElementById(id).textContent = '—');
+  document.getElementById('part-count').textContent = '';
+}
+
+// ═══════════════════════════════════════
+//  PARTS LIST UI
+// ═══════════════════════════════════════
+// Helper: HTML for one part row (used for ungrouped parts and group members)
+function partItemHTML(i, inGroup) {
+  const p = parts[i];
+  return `
+    <div class="part-item ${inGroup ? 'in-group' : ''}" id="pi-${i}"
+         data-idx="${i}"
+         onclick="onPartRowClick(event, ${i})">
+      <span class="part-check" id="pc-${i}"></span>
+      <div class="part-dot" style="background:${p.color}${p.isSurface ? ';border-radius:2px' : ''}"
+           onclick="event.stopPropagation();pickPartColor(${i}, event)"></div>
+      <span class="part-name"
+            ondblclick="event.stopPropagation();partNameDblClick(${i})">${p.name}${p.isSurface ? ' <span style="font-size:9px;color:var(--accent);opacity:0.7">SRF</span>' : ''}</span>
+      <button class="vis-btn" id="vb-${i}" onclick="event.stopPropagation();togglePartUI(${i})" title="Toggle visibility">
+        ${p.visible ? eyeOpen : eyeClose}
+      </button>
+    </div>`;
+}
+
+// Helper: HTML for one group header row
+function groupRowHTML(g) {
+  const anyVisible = [...g.partIndices].some(i => parts[i] && parts[i].visible);
+  const editing = g.id === groupEditingId;
+  return `
+    <div class="group-row ${g.expanded ? '' : 'collapsed'} ${editing ? 'editing' : ''}" id="gr-${g.id}"
+         onclick="toggleGroupExpanded(${g.id})">
+      <span class="gcaret">▾</span>
+      <span class="gname" ondblclick="event.stopPropagation();groupNameDblClick(${g.id})">${escapeHtml(g.name)}</span>
+      <span class="gcount-badge">${g.partIndices.size}</span>
+      <button class="gedit" onclick="event.stopPropagation();editGroup(${g.id})" title="Edit members (add/remove parts)">
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor"
+             stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="gdelete" onclick="event.stopPropagation();deleteGroup(${g.id})" title="Delete group (parts kept)">×</button>
+      <button class="vis-btn" onclick="event.stopPropagation();toggleGroupVisibility(${g.id})" title="Show/hide all members">
+        ${anyVisible ? eyeOpen : eyeClose}
+      </button>
+    </div>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function buildPartsList() {
+  const list = document.getElementById('parts-list');
+  // Index parts → group id (or null)
+  const partGroup = new Map();
+  groups.forEach(g => g.partIndices.forEach(i => partGroup.set(i, g.id)));
+
+  let html = '';
+  // 1. Render groups in order, members nested
+  groups.forEach(g => {
+    html += groupRowHTML(g);
+    if (g.expanded) {
+      // Render members in their original part order
+      const members = [...g.partIndices].sort((a, b) => a - b);
+      members.forEach(i => { html += partItemHTML(i, true); });
+    }
+  });
+  // 2. Render ungrouped parts
+  parts.forEach((p, i) => {
+    if (!partGroup.has(i)) html += partItemHTML(i, false);
+  });
+
+  list.innerHTML = html;
+  refreshPartTooltips();
+  refreshGroupSelectionUI();
+}
+
+// Update title attributes on dot/name based on edit mode
+function refreshPartTooltips() {
+  const editing = !!editMode;
+  document.querySelectorAll('#parts-list .part-dot').forEach(el => {
+    el.title = editing ? 'Click to change color' : '';
+  });
+  document.querySelectorAll('#parts-list .part-name').forEach(el => {
+    el.title = editing ? 'Double-click to rename' : 'Double-click to fit to this part';
+  });
+}
+
+const eyeOpen  = `<svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const eyeClose = `<svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+
+window.selectPartUI = (idx) => {
+  if (selIdx === idx) { deselectPart(); return; }
+  handleSelectClick(parts[idx].mesh);
+};
+
+window.togglePartUI = (idx) => {
+  const p = parts[idx];
+  p.visible = !p.visible;
+  p.mesh.visible = p.visible;
+  if (p.edges) p.edges.visible = p.visible && edgeMode;
+  if (p.wire) p.wire.visible = p.visible && edgeMode;
+  const btn = document.getElementById(`vb-${idx}`);
+  const item = document.getElementById(`pi-${idx}`);
+  if (btn) btn.innerHTML = p.visible ? eyeOpen : eyeClose;
+  if (btn) btn.style.color = p.visible ? '' : 'var(--border)';
+  if (item) item.classList.toggle('hidden-part', !p.visible);
+
+  // If this part belongs to a group, refresh the group header's eye icon
+  // (it shows open eye iff any member is visible).
+  const owner = groups.find(g => g.partIndices.has(idx));
+  if (owner) {
+    const grow = document.getElementById('gr-' + owner.id);
+    if (grow) {
+      const anyVis = [...owner.partIndices].some(i => parts[i] && parts[i].visible);
+      const ge = grow.querySelector('.vis-btn');
+      if (ge) ge.innerHTML = anyVis ? eyeOpen : eyeClose;
+    }
+  }
+};
+
+// ─── PART RENAME ───────────────────────────────
+function refreshPartNameUI(idx) {
+  const p = parts[idx];
+  const span = document.querySelector(`#pi-${idx} .part-name`);
+  if (span) {
+    span.innerHTML = p.name + (p.isSurface
+      ? ' <span style="font-size:9px;color:var(--accent);opacity:0.7">SRF</span>'
+      : '');
+    span.title = editMode ? 'Double-click to rename' : 'Double-click to fit to this part';
+  }
+  if (selIdx === idx) {
+    const nameEl = document.querySelector('#sel-box .sel-name');
+    if (nameEl) nameEl.textContent = p.name;
+  }
+}
+
+window.editPartName = (idx) => {
+  const item = document.getElementById(`pi-${idx}`);
+  if (!item) return;
+  const span = item.querySelector('.part-name');
+  if (!span) return;
+
+  const original = parts[idx].name;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = original;
+  input.className = 'part-name-edit';
+  item.replaceChild(input, span);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    if (save) {
+      const v = input.value.trim();
+      if (v) parts[idx].name = v;
+    }
+    const newSpan = document.createElement('span');
+    newSpan.className = 'part-name';
+    newSpan.title = editMode ? 'Double-click to rename' : 'Double-click to fit to this part';
+    newSpan.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      partNameDblClick(idx);
+    });
+    newSpan.innerHTML = parts[idx].name + (parts[idx].isSurface
+      ? ' <span style="font-size:9px;color:var(--accent);opacity:0.7">SRF</span>'
+      : '');
+    item.replaceChild(newSpan, input);
+    if (save && selIdx === idx) {
+      const nameEl = document.querySelector('#sel-box .sel-name');
+      if (nameEl) nameEl.textContent = parts[idx].name;
+    }
+  };
+
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', (e) => e.stopPropagation());
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); input.value = original; finish(false); }
+  });
+};
+
+// ─── EDIT MODE TOGGLE ──────────────────────────
+// When ON: dot click → colour picker; double-click name → rename.
+// When OFF: dot click is inert; double-click name → fit camera to that part.
+let editMode = false;
+window.toggleEditMode = () => {
+  editMode = !editMode;
+  const btn = document.getElementById('btn-edit-mode');
+  if (btn) btn.classList.toggle('active', editMode);
+  document.body.classList.toggle('edit-on', editMode);
+  refreshPartTooltips();
+};
+
+// Dispatcher for part-name double-click. Behaviour depends on edit mode.
+window.partNameDblClick = (idx) => {
+  if (editMode) editPartName(idx);
+  else fitToPart(idx);
+};
+
+// Frame the camera on a single part without changing visibility of others.
+// Reuses the same fov / fog / near-far machinery as fitToView so the part
+// is always clearly visible regardless of model scale.
+window.fitToPart = (idx) => {
+  const p = parts[idx];
+  if (!p || !p.mesh) return;
+  p.mesh.updateMatrixWorld(true);
+  if (p.mesh.geometry && !p.mesh.geometry.boundingBox) {
+    p.mesh.geometry.computeBoundingBox();
+  }
+  const box = new THREE.Box3().setFromObject(p.mesh);
+  if (box.isEmpty()) return;
+
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const maxD = Math.max(size.x, size.y, size.z) || 1;
+
+  const fovV = camera.fov * Math.PI / 180;
+  const fovH = 2 * Math.atan(Math.tan(fovV / 2) * camera.aspect);
+  const fov  = Math.min(fovV, fovH);
+  const dist = (maxD / 2) / Math.tan(fov / 2) * 1.4;  // a bit more padding for single-part view
+
+  // Keep current view direction so the user's mental orientation is preserved
+  let dir = camera.position.clone().sub(controls.target);
+  if (dir.lengthSq() < 1e-9) dir.set(1, 0.8, 1);
+  dir.normalize();
+
+  camera.position.copy(center).addScaledVector(dir, dist);
+  controls.target.copy(center);
+
+  camera.near = Math.max(dist / 1000, 0.001);
+  camera.far  = Math.max(dist * 1000, 1000);
+  camera.updateProjectionMatrix();
+
+  // Same fog rescale used by fitToView so the part doesn't fade out
+  if (scene.fog) {
+    const dFar = dist + maxD / 2;
+    scene.fog.density = 0.226 / Math.max(dFar, 1) * 0.5;
+  }
+
+  controls.update();
+
+  // Also select the part so the right-side info reflects what's being viewed
+  if (selIdx !== idx) handleSelectClick(p.mesh);
+};
+
+// ─── GROUP MODE ────────────────────────────────
+// Click on a part row → in normal mode selects the part; in group mode
+// toggles its checkbox. Drag-sweep and Shift-click ranges are supported in
+// group mode.
+window.onPartRowClick = (ev, idx) => {
+  if (!groupMode) {
+    selectPartUI(idx);
+    return;
+  }
+  // Group mode: toggle / range select
+  if (ev.shiftKey && groupLastClickedIdx != null) {
+    selectRange(groupLastClickedIdx, idx, true);
+  } else {
+    toggleGroupCheck(idx);
+    groupLastClickedIdx = idx;
+  }
+};
+
+// Click in 3D viewport while group mode is on. Toggles the clicked part's
+// membership in the current selection. If the part already belongs to a
+// DIFFERENT group, we still toggle it into the selection — committing the
+// selection later will move it (single-membership rule honoured by
+// createGroupFromSelection / finish-edit logic).
+function handleGroupViewportClick(mesh) {
+  const idx = parts.findIndex(p => p.mesh === mesh);
+  if (idx < 0) return;
+  toggleGroupCheck(idx);
+  groupLastClickedIdx = idx;
+  // Scroll the row into view so the user can see the checkbox tick
+  const row = document.getElementById('pi-' + idx);
+  if (row && typeof row.scrollIntoView === 'function') {
+    row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+function toggleGroupCheck(idx) {
+  if (groupSelected.has(idx)) {
+    groupSelected.delete(idx);
+    refreshGroupSelectionUI();
+    return;
+  }
+  // If this part already belongs to a different group, refuse to steal it.
+  // Exception: if we're editing that exact group, adding back is fine
+  // (though it should already be in the selection set).
+  const owner = groups.find(g => g.partIndices.has(idx));
+  if (owner && owner.id !== groupEditingId) {
+    flashGroupSelectionMsg('Part already in "' + owner.name + '" — remove it from there first');
+    return;
+  }
+  groupSelected.add(idx);
+  refreshGroupSelectionUI();
+}
+
+function setGroupCheck(idx, on) {
+  if (on) {
+    // Honour single-membership: don't add a part that's already in another group
+    const owner = groups.find(g => g.partIndices.has(idx));
+    if (owner && owner.id !== groupEditingId) return;
+    groupSelected.add(idx);
+  } else {
+    groupSelected.delete(idx);
+  }
+}
+
+// Brief inline message in the action bar
+let _flashTimer = null;
+function flashGroupSelectionMsg(text) {
+  const lbl = document.getElementById('gcount-label');
+  if (!lbl) return;
+  const orig = lbl.textContent;
+  lbl.textContent = text;
+  lbl.style.color = '#ffb84a';
+  if (_flashTimer) clearTimeout(_flashTimer);
+  _flashTimer = setTimeout(() => {
+    lbl.style.color = '';
+    refreshGroupSelectionUI();
+  }, 2200);
+}
+
+// Select a contiguous range between two part indices in the rendered order.
+// Walks the DOM rather than the parts array because groups reorder things.
+function selectRange(fromIdx, toIdx, value) {
+  const items = [...document.querySelectorAll('#parts-list .part-item')];
+  const order = items.map(el => parseInt(el.dataset.idx, 10));
+  const i1 = order.indexOf(fromIdx), i2 = order.indexOf(toIdx);
+  if (i1 < 0 || i2 < 0) return;
+  const [lo, hi] = i1 < i2 ? [i1, i2] : [i2, i1];
+  for (let k = lo; k <= hi; k++) setGroupCheck(order[k], value);
+  refreshGroupSelectionUI();
+}
+
+window.toggleGroupMode = () => {
+  groupMode = !groupMode;
+  const btn = document.getElementById('btn-group-mode');
+  if (btn) btn.classList.toggle('active', groupMode);
+  document.body.classList.toggle('group-on', groupMode);
+  if (!groupMode) {
+    groupSelected.clear();
+    groupLastClickedIdx = null;
+    groupEditingId = null;
+    clearAllHighlights();
+  }
+  refreshGroupSelectionUI();
+};
+
+// Repaint checkboxes + count + button states without rebuilding the list
+function refreshGroupSelectionUI() {
+  document.querySelectorAll('#parts-list .part-item').forEach(el => {
+    const idx = parseInt(el.dataset.idx, 10);
+    const checked = groupSelected.has(idx);
+    el.classList.toggle('gsel', checked);
+    const cb = el.querySelector('.part-check');
+    if (cb) cb.classList.toggle('checked', checked);
+  });
+  const lbl = document.getElementById('gcount-label');
+  if (lbl) lbl.textContent = groupSelected.size + ' selected'
+    + (groupEditingId != null ? ' — editing "' + (groups.find(g => g.id === groupEditingId)?.name || '') + '"' : '');
+  const createBtn = document.getElementById('btn-group-create');
+  if (createBtn) {
+    createBtn.disabled = groupSelected.size < 1;
+    createBtn.textContent = groupEditingId != null ? 'Done' : 'Group';
+  }
+  refreshHighlights();
+}
+
+// ── 3D BOX-DRAG (RUBBER-BAND) ──────────────────
+// In group mode, dragging in the viewport draws a selection rectangle.
+// Any part whose centre projects inside the rectangle gets toggled.
+// Drag mode: starting on a selected part → remove; otherwise → add.
+let groupBoxMode = 'add';
+
+function onGroupBoxDown(e) {
+  if (!groupMode) return;
+  if (e.button !== 0) return;
+  if (e.altKey || e.shiftKey) return;
+  groupBoxActive = true;
+  groupBoxStart = { x: e.clientX, y: e.clientY };
+  const hit = getHit(e);
+  const hitIdx = hit ? parts.findIndex(p => p.mesh === hit.object) : -1;
+  groupBoxMode = (hitIdx >= 0 && groupSelected.has(hitIdx)) ? 'remove' : 'add';
+  const ov = document.getElementById('group-box');
+  if (ov) ov.style.display = 'none';
+}
+
+function onGroupBoxMove(e) {
+  if (!groupBoxActive) return;
+  const vpRect = document.getElementById('viewport').getBoundingClientRect();
+  const x0 = Math.min(groupBoxStart.x, e.clientX) - vpRect.left;
+  const y0 = Math.min(groupBoxStart.y, e.clientY) - vpRect.top;
+  const w  = Math.abs(e.clientX - groupBoxStart.x);
+  const h  = Math.abs(e.clientY - groupBoxStart.y);
+  const ov = document.getElementById('group-box');
+  if (!ov) return;
+  if (w > 3 || h > 3) ov.style.display = 'block';
+  ov.style.left = x0 + 'px';
+  ov.style.top  = y0 + 'px';
+  ov.style.width = w + 'px';
+  ov.style.height = h + 'px';
+}
+
+function onGroupBoxUp(e) {
+  if (!groupBoxActive) return;
+  groupBoxActive = false;
+  const ov = document.getElementById('group-box');
+  if (ov) ov.style.display = 'none';
+
+  const dx = Math.abs(e.clientX - groupBoxStart.x);
+  const dy = Math.abs(e.clientY - groupBoxStart.y);
+
+  // Tiny movement → treat as a click on whatever part is under the cursor.
+  if (dx < 4 && dy < 4) {
+    const hit = getHit(e);
+    if (hit) handleGroupViewportClick(hit.object);
+    return;
+  }
+
+  // Otherwise: rectangle select. Project each visible part's bbox centre to
+  // screen and test whether it lies inside the drawn rectangle.
+  const r = renderer.domElement.getBoundingClientRect();
+  const sx0 = Math.min(groupBoxStart.x, e.clientX) - r.left;
+  const sy0 = Math.min(groupBoxStart.y, e.clientY) - r.top;
+  const sx1 = sx0 + dx;
+  const sy1 = sy0 + dy;
+  const v = new THREE.Vector3();
+  let hits = 0;
+  let skippedOwned = 0;
+  parts.forEach((p, i) => {
+    if (!p.visible) return;
+    p.mesh.updateMatrixWorld(true);
+    if (p.mesh.geometry && !p.mesh.geometry.boundingBox) {
+      p.mesh.geometry.computeBoundingBox();
+    }
+    const bb = p.mesh.geometry.boundingBox;
+    if (!bb) return;
+    bb.getCenter(v).applyMatrix4(p.mesh.matrixWorld);
+    if (!Number.isFinite(v.x)) return;
+    v.project(camera);
+    if (v.z < -1 || v.z > 1) return;
+    const px = (v.x *  0.5 + 0.5) * r.width;
+    const py = (v.y * -0.5 + 0.5) * r.height;
+    if (px >= sx0 && px <= sx1 && py >= sy0 && py <= sy1) {
+      const before = groupSelected.size;
+      if (groupBoxMode === 'add') {
+        // Only add if not already in another group (or if editing that group).
+        const owner = groups.find(g => g.partIndices.has(i));
+        if (!owner || owner.id === groupEditingId) {
+          groupSelected.add(i);
+        } else {
+          skippedOwned++;
+        }
+      } else {
+        groupSelected.delete(i);
+      }
+      if (groupSelected.size !== before) hits++;
+    }
+  });
+  if (hits > 0) refreshGroupSelectionUI();
+  if (skippedOwned > 0) {
+    flashGroupSelectionMsg(skippedOwned + ' part(s) skipped (already in another group)');
+  }
+}
+
+// ─── 3D HIGHLIGHT FOR GROUP SELECTION ──────────
+// Each selected part gets its origMat swapped for a clone with brightened
+// emissive in its own colour. We track which parts have been highlighted so
+// we can revert cleanly on deselect or mode-off.
+const _hlMats = new Map();   // idx → highlight material
+
+function applyHighlight(idx) {
+  const p = parts[idx];
+  if (!p || !p.origMat) return;
+  // Don't double-apply, and don't fight with single-select highlight
+  if (selIdx === idx) return;
+  if (_hlMats.has(idx)) return;
+  const hl = p.origMat.clone();
+  // Brighten by adding emissive in the part's own colour
+  hl.emissive = new THREE.Color(p.color);
+  hl.emissiveIntensity = 0.55;
+  p.mesh.material = hl;
+  _hlMats.set(idx, hl);
+}
+
+function clearHighlight(idx) {
+  if (!_hlMats.has(idx)) return;
+  const p = parts[idx];
+  if (p && p.origMat && selIdx !== idx) {
+    p.mesh.material = p.origMat;
+  }
+  _hlMats.delete(idx);
+}
+
+function clearAllHighlights() {
+  [..._hlMats.keys()].forEach(clearHighlight);
+}
+
+function refreshHighlights() {
+  // Add highlight for newly-selected, remove for newly-deselected
+  groupSelected.forEach(idx => applyHighlight(idx));
+  [..._hlMats.keys()].forEach(idx => {
+    if (!groupSelected.has(idx)) clearHighlight(idx);
+  });
+}
+
+window.clearGroupSelection = () => {
+  groupSelected.clear();
+  groupEditingId = null;
+  refreshGroupSelectionUI();
+};
+
+window.createGroupFromSelection = () => {
+  // Finishing an in-progress edit of an existing group
+  if (groupEditingId != null) {
+    const g = groups.find(x => x.id === groupEditingId);
+    if (g) {
+      // Single-membership: if any selected indices are in OTHER groups, pull them out
+      const newIdxs = new Set(groupSelected);
+      groups.forEach(other => {
+        if (other === g) return;
+        newIdxs.forEach(i => other.partIndices.delete(i));
+      });
+      g.partIndices = newIdxs;
+    }
+    // Drop any group that became empty (e.g. user removed all members)
+    groups = groups.filter(g2 => g2.partIndices.size > 0);
+    groupEditingId = null;
+    groupSelected.clear();
+    buildPartsList();
+    return;
+  }
+
+  // Otherwise: create a new group
+  if (groupSelected.size < 1) return;
+  const name = prompt('Group name:', 'Group ' + (groups.length + 1));
+  if (!name || !name.trim()) return;
+
+  // Single-membership rule: pull selected parts out of any existing groups,
+  // then drop empty groups.
+  const newIndices = new Set(groupSelected);
+  groups.forEach(g => {
+    newIndices.forEach(i => g.partIndices.delete(i));
+  });
+  groups = groups.filter(g => g.partIndices.size > 0);
+
+  groups.push({
+    id: groupIdSeq++,
+    name: name.trim(),
+    partIndices: newIndices,
+    expanded: true,
+  });
+
+  groupSelected.clear();
+  buildPartsList();
+};
+
+// Enter edit mode for an existing group: switch on group-mode if needed,
+// load that group's members into the selection set, and remember which
+// group we're editing so Done writes back to it.
+window.editGroup = (gid) => {
+  const g = groups.find(x => x.id === gid);
+  if (!g) return;
+  if (!groupMode) {
+    // Turn on group mode without clearing — we'll load below
+    groupMode = true;
+    const btn = document.getElementById('btn-group-mode');
+    if (btn) btn.classList.add('active');
+    document.body.classList.add('group-on');
+  }
+  groupEditingId = gid;
+  groupSelected = new Set(g.partIndices);
+  groupLastClickedIdx = null;
+  refreshGroupSelectionUI();
+};
+
+window.toggleGroupExpanded = (gid) => {
+  const g = groups.find(x => x.id === gid);
+  if (!g) return;
+  g.expanded = !g.expanded;
+  buildPartsList();
+};
+
+// Mass-toggle visibility of all members. Each part's individual eye still
+// works after — this just sets all members to the *opposite* of the dominant
+// state (if any are visible, hide all; if all hidden, show all).
+window.toggleGroupVisibility = (gid) => {
+  const g = groups.find(x => x.id === gid);
+  if (!g) return;
+  const indices = [...g.partIndices];
+  const anyVisible = indices.some(i => parts[i] && parts[i].visible);
+  const target = !anyVisible;  // if any visible → hide all; else show all
+  indices.forEach(i => {
+    if (!parts[i]) return;
+    if (parts[i].visible !== target) togglePartUI(i);
+  });
+  // Rebuild header eye icon
+  buildPartsList();
+};
+
+window.deleteGroup = (gid) => {
+  groups = groups.filter(g => g.id !== gid);
+  buildPartsList();
+};
+
+window.groupNameDblClick = (gid) => {
+  if (!editMode) return;            // group rename gated by edit mode
+  const g = groups.find(x => x.id === gid);
+  if (!g) return;
+  const row = document.getElementById('gr-' + gid);
+  if (!row) return;
+  const span = row.querySelector('.gname');
+  if (!span) return;
+
+  const original = g.name;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = original;
+  input.className = 'gname-edit';
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    if (save) {
+      const v = input.value.trim();
+      if (v) g.name = v;
+    }
+    buildPartsList();
+  };
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); input.value = original; finish(false); }
+  });
+};
+
+// Drag-sweep selection: in group mode, holding the mouse and dragging across
+// rows toggles each row passed over. The first row decides the action: if it
+// was unchecked, drag adds; if it was checked, drag removes. This matches
+// the Windows file-explorer rubber-band feel.
+function setupDragSweep() {
+  const list = document.getElementById('parts-list');
+  if (!list || list._sweepWired) return;
+  list._sweepWired = true;
+
+  const rowFromEvent = (ev) => {
+    const t = document.elementFromPoint(ev.clientX, ev.clientY);
+    return t && t.closest ? t.closest('.part-item') : null;
+  };
+
+  list.addEventListener('mousedown', (ev) => {
+    if (!groupMode) return;
+    if (ev.button !== 0) return;
+    const row = rowFromEvent(ev);
+    if (!row) return;
+    const idx = parseInt(row.dataset.idx, 10);
+    if (Number.isNaN(idx)) return;
+    // Decide drag mode based on the starting row's current state
+    groupDragActive = true;
+    groupDragMode = groupSelected.has(idx) ? 'remove' : 'add';
+    // Don't pre-toggle — let the click handler do it for the start row.
+    // We just track movement from here.
+  });
+
+  list.addEventListener('mousemove', (ev) => {
+    if (!groupDragActive || !groupMode) return;
+    if (ev.buttons === 0) { groupDragActive = false; return; }
+    const row = rowFromEvent(ev);
+    if (!row) return;
+    const idx = parseInt(row.dataset.idx, 10);
+    if (Number.isNaN(idx)) return;
+    const want = groupDragMode === 'add';
+    if (groupSelected.has(idx) !== want) {
+      setGroupCheck(idx, want);
+      refreshGroupSelectionUI();
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    groupDragActive = false;
+    groupDragMode = null;
+  });
+
+  // Block native text selection while sweeping
+  list.addEventListener('selectstart', (ev) => {
+    if (groupMode && groupDragActive) ev.preventDefault();
+  });
+}
+// Wire drag-sweep once the DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', setupDragSweep);
+} else {
+  setupDragSweep();
+}
+
+// ─── PART COLOR EDIT ───────────────────────────
+let _colorPickIdx = null;
+window.pickPartColor = (idx, ev) => {
+  if (!editMode) return;
+  const picker = document.getElementById('part-color-picker');
+  if (!picker) return;
+  _colorPickIdx = idx;
+  picker.value = parts[idx].color;
+  // Position the (invisible) input near the clicked dot so any browser
+  // popover appears in a sensible place
+  if (ev && typeof ev.clientX === 'number') {
+    picker.style.left = ev.clientX + 'px';
+    picker.style.top  = ev.clientY + 'px';
+  }
+  picker.click();
+};
+
+function setPartColor(idx, hex) {
+  const p = parts[idx];
+  if (!p || !p.origMat) return;
+  p.color = hex;
+  p.origMat.color.set(hex);
+  p.origMat.needsUpdate = true;
+  // If the mesh is currently showing a different material (selection highlight,
+  // min-dist highlight, etc.), update that one too so the change is visible.
+  if (p.mesh.material !== p.origMat && p.mesh.material.color) {
+    p.mesh.material.color.set(hex);
+    p.mesh.material.needsUpdate = true;
+  }
+  // If this part has a group-mode brighten highlight, sync its emissive too
+  // (group highlights use the part's own colour as emissive).
+  if (_hlMats && _hlMats.has(idx)) {
+    const hl = _hlMats.get(idx);
+    if (hl && hl.emissive) hl.emissive.set(hex);
+  }
+  // Update parts tree dot
+  const dot = document.querySelector(`#pi-${idx} .part-dot`);
+  if (dot) dot.style.background = hex;
+  // Update selection sidebar if this is the selected part
+  if (selIdx === idx) {
+    const swatch = document.querySelector('#sel-box .sel-swatch');
+    const hexEl = document.querySelector('#sel-box .sel-hex');
+    if (swatch) swatch.style.background = hex;
+    if (hexEl) hexEl.textContent = hex.toUpperCase();
+  }
+}
+
+// ═══════════════════════════════════════
+//  TOOLBAR ACTIONS (exposed globally)
+// ═══════════════════════════════════════
+window.fitToView = (resetAngle = false) => {
+  if (!parts.length) return;
+
+  // Ensure matrices and geometry bounds are current before measuring
+  parts.forEach(p => {
+    if (!p.visible) return;
+    p.mesh.updateMatrixWorld(true);
+    if (p.mesh.geometry && !p.mesh.geometry.boundingBox) {
+      p.mesh.geometry.computeBoundingBox();
+    }
+  });
+
+  const box = new THREE.Box3();
+  parts.forEach(p => { if (p.visible) box.expandByObject(p.mesh); });
+  if (box.isEmpty()) parts.forEach(p => box.expandByObject(p.mesh));
+  if (box.isEmpty()) return;
+
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const maxD = Math.max(size.x, size.y, size.z) || 1;
+
+  // Fit so the largest dimension fills ~85% of the smaller viewport axis
+  const fovV = camera.fov * Math.PI / 180;
+  const fovH = 2 * Math.atan(Math.tan(fovV / 2) * camera.aspect);
+  const fov  = Math.min(fovV, fovH);
+  const dist = (maxD / 2) / Math.tan(fov / 2) * 1.15;  // 1.15 = small margin
+
+  // View direction: reset to clean iso on load, otherwise preserve user's angle
+  let dir;
+  if (resetAngle) {
+    dir = new THREE.Vector3(1, 0.8, 1).normalize();
+  } else {
+    dir = camera.position.clone().sub(controls.target);
+    if (dir.lengthSq() < 1e-9) dir.set(1, 0.8, 1);
+    dir.normalize();
+  }
+
+  camera.position.copy(center).addScaledVector(dir, dist);
+  controls.target.copy(center);
+
+  // Scale near/far planes to the model so depth precision stays sane
+  // across tiny parts (mm-scale) and huge assemblies (meter-scale)
+  camera.near = Math.max(dist / 1000, 0.001);
+  camera.far  = Math.max(dist * 1000, 1000);
+  camera.updateProjectionMatrix();
+
+  // Scale fog density to the fit distance. FogExp2 attenuation is
+  // exp(-(density * d)^2). We want ~5% attenuation at the far side of the
+  // model so it stays bright, then a gentle falloff into the background.
+  // Far-side distance ≈ dist + maxD/2, target attenuation 0.05 →
+  //   density = sqrt(-ln(0.95)) / d_far ≈ 0.226 / d_far
+  if (scene.fog) {
+    const dFar = dist + maxD / 2;
+    scene.fog.density = 0.226 / Math.max(dFar, 1) * 0.5; // 0.5 = extra headroom
+  }
+
+  controls.update();
+};
+
+window.resetCamera = () => {
+  camera.position.set(5, 5, 10);
+  controls.target.set(0, 0, 0);
+  controls.update();
+};
+
+window.toggleWireframe = () => {
+  wireMode = !wireMode;
+  parts.forEach(p => p.mesh.material.wireframe = wireMode);
+  document.getElementById('btn-wire').classList.toggle('active', wireMode);
+};
+
+window.toggleGhost = () => {
+  ghostMode = !ghostMode;
+  parts.forEach(p => {
+    p.mesh.material.transparent = ghostMode;
+    p.mesh.material.opacity = ghostMode ? 0.3 : 1;
+    p.mesh.material.depthWrite = !ghostMode;
+  });
+  document.getElementById('btn-ghost').classList.toggle('active', ghostMode);
+};
+
+window.toggleEdges = () => {
+  edgeMode = !edgeMode;
+  parts.forEach(p => {
+    if (p.edges) p.edges.visible = p.visible && edgeMode;
+    if (p.wire) p.wire.visible = p.visible && edgeMode;
+  });
+  document.getElementById('btn-edges').classList.toggle('active', edgeMode);
+};
+
+window.toggleGrid = () => {
+  if (!gridHelper) return;
+  gridHelper.visible = !gridHelper.visible;
+  document.getElementById('btn-grid').classList.toggle('active', gridHelper.visible);
+};
+
+// ═══════════════════════════════════════
+//  SECTION CUT
+// ═══════════════════════════════════════
+window.toggleSection = () => {
+  sectionActive = !sectionActive;
+  document.getElementById('btn-section').classList.toggle('active', sectionActive);
+  document.getElementById('section-panel').style.display = sectionActive ? 'block' : 'none';
+
+  if (sectionActive) {
+    if (!sectionPlane) {
+      sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+    }
+    if (!sectionRange) resetSectionRangeToFull();
+    updateSectionPlane();
+    applyClipping(true);
+  } else {
+    sectionFacePickMode = false;
+    document.getElementById('canvas').style.cursor = 'default';
+    applyClipping(false);
+    removeSectionHelper();
+  }
+};
+
+window.setSectionAxis = (axis) => {
+  sectionAxis = axis;
+  ['X','Y','Z','F'].forEach(a => {
+    const el = document.getElementById('sec-ax-' + a);
+    if (el) el.classList.toggle('active', a === axis);
+  });
+
+  // Bounds reset to the full model range for the newly-selected axis
+  // (deferred for F until a face is picked, since we need the normal first).
+  if (axis !== 'F') resetSectionRangeToFull();
+  else sectionRange = null;
+
+  const hintEl = document.getElementById('sec-face-hint');
+  const infoEl = document.getElementById('sec-face-info');
+
+  if (axis === 'F') {
+    // Enter face-pick mode. If we already have a face, allow re-picking
+    // by clicking Face again.
+    sectionFacePickMode = true;
+    hintEl.style.display = 'block';
+    hintEl.textContent = 'Click a face on the model to align the cut plane.';
+    document.getElementById('canvas').style.cursor = 'crosshair';
+    // If a face was previously picked, keep the plane until a new one is chosen
+    if (sectionFaceNormal) {
+      updateSectionPlane();
+    }
+  } else {
+    sectionFacePickMode = false;
+    hintEl.style.display = 'none';
+    infoEl.style.display = 'none';
+    document.getElementById('canvas').style.cursor = 'default';
+    updateSectionPlane();
+  }
+};
+
+function handleSectionFacePick(hit) {
+  // hit.face.normal is in OBJECT space — transform to world space
+  const nMat = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
+  const worldNormal = hit.face.normal.clone().applyMatrix3(nMat).normalize();
+
+  sectionFaceNormal = worldNormal;
+  sectionFacePoint  = hit.point.clone();
+  sectionFacePickMode = false;
+  document.getElementById('canvas').style.cursor = 'default';
+
+  document.getElementById('sec-face-hint').style.display = 'none';
+  const info = document.getElementById('sec-face-info');
+  info.style.display = 'block';
+  info.innerHTML =
+    `N (${worldNormal.x.toFixed(3)}, ${worldNormal.y.toFixed(3)}, ${worldNormal.z.toFixed(3)})<br>` +
+    `P (${sectionFacePoint.x.toFixed(2)}, ${sectionFacePoint.y.toFixed(2)}, ${sectionFacePoint.z.toFixed(2)})`;
+
+  // Initialise slider to the picked point's position along the normal.
+  // Bounds reset to the full projected range for this normal.
+  if (modelBBox) {
+    const range = projectBoxOntoNormal(modelBBox, worldNormal);
+    sectionRange = { min: range.min, max: range.max };
+    syncSectionBoundInputs();
+    const signed = sectionFacePoint.dot(worldNormal);
+    let t = (signed - range.min) / (range.max - range.min || 1);
+    t = Math.max(0, Math.min(1, t));
+    document.getElementById('sec-slider').value = Math.round(t * 1000);
+  }
+
+  onSectionSlider(document.getElementById('sec-slider').value);
+  applyClipping(true);
+}
+
+function projectBoxOntoNormal(box, normal) {
+  const corners = [
+    new THREE.Vector3(box.min.x, box.min.y, box.min.z),
+    new THREE.Vector3(box.min.x, box.min.y, box.max.z),
+    new THREE.Vector3(box.min.x, box.max.y, box.min.z),
+    new THREE.Vector3(box.min.x, box.max.y, box.max.z),
+    new THREE.Vector3(box.max.x, box.min.y, box.min.z),
+    new THREE.Vector3(box.max.x, box.min.y, box.max.z),
+    new THREE.Vector3(box.max.x, box.max.y, box.min.z),
+    new THREE.Vector3(box.max.x, box.max.y, box.max.z),
+  ];
+  let mn = Infinity, mx = -Infinity;
+  for (const c of corners) {
+    const d = c.dot(normal);
+    if (d < mn) mn = d;
+    if (d > mx) mx = d;
+  }
+  return { min: mn, max: mx };
+}
+
+// Compute the model's full range along the active section axis/normal.
+// Returns { min, max } in world units, or null if not available.
+function computeSectionFullRange() {
+  if (!modelBBox) return null;
+  if (sectionAxis === 'F') {
+    if (!sectionFaceNormal) return null;
+    return projectBoxOntoNormal(modelBBox, sectionFaceNormal);
+  }
+  if (sectionAxis === 'X') return { min: modelBBox.min.x, max: modelBBox.max.x };
+  if (sectionAxis === 'Y') return { min: modelBBox.min.y, max: modelBBox.max.y };
+  return { min: modelBBox.min.z, max: modelBBox.max.z };
+}
+
+// Reset the user-editable slider bounds to the model's full range for the
+// current axis. Called when axis changes or when the user clicks Center.
+function resetSectionRangeToFull() {
+  const r = computeSectionFullRange();
+  sectionRange = r ? { min: r.min, max: r.max } : null;
+  syncSectionBoundInputs();
+}
+
+// Push current sectionRange numbers into the Min/Max input fields.
+function syncSectionBoundInputs() {
+  const minEl = document.getElementById('sec-min');
+  const maxEl = document.getElementById('sec-max');
+  if (!sectionRange) {
+    if (minEl) minEl.value = '';
+    if (maxEl) maxEl.value = '';
+    return;
+  }
+  if (minEl && document.activeElement !== minEl) minEl.value = sectionRange.min.toFixed(3);
+  if (maxEl && document.activeElement !== maxEl) maxEl.value = sectionRange.max.toFixed(3);
+}
+
+window.onSectionSlider = (val) => {
+  if (!modelBBox || !sectionPlane) return;
+
+  // Lazy-init / refresh the slider range if needed (e.g. first-ever call,
+  // or model changed under us).
+  if (!sectionRange) resetSectionRangeToFull();
+  if (!sectionRange) return; // still nothing (e.g. F-mode without face)
+
+  const t = val / 1000; // 0..1 within current min/max
+  const sign = sectionFlip ? -1 : 1;
+  const pos = sectionRange.min + (sectionRange.max - sectionRange.min) * t;
+
+  if (sectionAxis === 'F') {
+    if (!sectionFaceNormal) return;
+    const n = sectionFaceNormal;
+    sectionPlane.set(n.clone().multiplyScalar(-sign), pos * sign);
+    applyClipping(true);
+    updateSectionHelper(pos);
+    document.getElementById('sec-pos').textContent = pos.toFixed(3);
+    return;
+  }
+
+  const normal = getAxisNormal();
+  sectionPlane.set(normal.clone().multiplyScalar(sign), pos * sign);
+  applyClipping(true);
+  updateSectionHelper(pos);
+  document.getElementById('sec-pos').textContent = pos.toFixed(3);
+};
+
+// Edit the slider's min or max. We try to keep the current physical position
+// of the cut by re-deriving the slider value, so the model doesn't visually
+// jump under the user. If the current position falls outside the new range,
+// the slider clamps to the nearest end.
+window.onSectionBoundChange = (which, raw) => {
+  const num = parseFloat(raw);
+  if (!Number.isFinite(num)) { syncSectionBoundInputs(); return; }
+  if (!sectionRange) resetSectionRangeToFull();
+  if (!sectionRange) return;
+
+  // Capture the current cut position BEFORE we change the bounds
+  const slider = document.getElementById('sec-slider');
+  const tOld = parseFloat(slider.value) / 1000;
+  const posOld = sectionRange.min + (sectionRange.max - sectionRange.min) * tOld;
+
+  if (which === 'min') sectionRange.min = num;
+  else sectionRange.max = num;
+
+  // Sanity: keep min <= max. If the user inverts them, swap.
+  if (sectionRange.min > sectionRange.max) {
+    const tmp = sectionRange.min;
+    sectionRange.min = sectionRange.max;
+    sectionRange.max = tmp;
+  }
+  // Avoid zero span
+  if (sectionRange.max - sectionRange.min < 1e-9) {
+    sectionRange.max = sectionRange.min + 1e-6;
+  }
+
+  // Re-derive slider position to preserve the cut location where possible
+  let tNew = (posOld - sectionRange.min) / (sectionRange.max - sectionRange.min);
+  tNew = Math.max(0, Math.min(1, tNew));
+  slider.value = Math.round(tNew * 1000);
+
+  syncSectionBoundInputs();
+  onSectionSlider(slider.value);
+};
+
+window.flipSection = () => {
+  sectionFlip = !sectionFlip;
+  document.getElementById('btn-sec-flip').classList.toggle('active', sectionFlip);
+  onSectionSlider(document.getElementById('sec-slider').value);
+};
+
+window.resetSection = () => {
+  resetSectionRangeToFull();
+  document.getElementById('sec-slider').value = 500;
+  sectionFlip = false;
+  document.getElementById('btn-sec-flip').classList.remove('active');
+  onSectionSlider(500);
+};
+
+function getAxisNormal() {
+  if (sectionAxis === 'X') return new THREE.Vector3(-1, 0, 0);
+  if (sectionAxis === 'Y') return new THREE.Vector3(0, -1, 0);
+  if (sectionAxis === 'Z') return new THREE.Vector3(0, 0, -1);
+  // 'F' — caller should handle, but return the (negated) face normal as fallback
+  return sectionFaceNormal ? sectionFaceNormal.clone().negate() : new THREE.Vector3(-1, 0, 0);
+}
+
+function updateSectionPlane() {
+  if (!modelBBox || !sectionPlane) return;
+  onSectionSlider(document.getElementById('sec-slider').value);
+}
+
+function applyClipping(enable) {
+  const planes = enable && sectionPlane ? [sectionPlane] : [];
+  parts.forEach(p => {
+    p.mesh.material.clippingPlanes = planes;
+    p.mesh.material.clipShadows = true;
+    p.mesh.material.needsUpdate = true;
+    if (p.origMat) {
+      p.origMat.clippingPlanes = planes;
+      p.origMat.clipShadows = true;
+      p.origMat.needsUpdate = true;
+    }
+    if (p.edges) {
+      p.edges.material.clippingPlanes = planes;
+      p.edges.material.needsUpdate = true;
+    }
+    if (p.wire) {
+      p.wire.material.clippingPlanes = planes;
+      p.wire.material.needsUpdate = true;
+    }
+  });
+}
+
+function updateSectionHelper(pos) {
+  removeSectionHelper();
+  if (!modelBBox) return;
+
+  const sz = modelBBox.getSize(new THREE.Vector3());
+  const ctr = modelBBox.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(sz.x, sz.y, sz.z) * 1.2;
+
+  const helperGeo = new THREE.PlaneGeometry(maxDim, maxDim);
+  const helperMat = new THREE.MeshBasicMaterial({
+    color: 0x00d4ff, transparent: true, opacity: 0.08,
+    side: THREE.DoubleSide, depthWrite: false
+  });
+  sectionHelper = new THREE.Mesh(helperGeo, helperMat);
+
+  if (sectionAxis === 'F' && sectionFaceNormal) {
+    // Default PlaneGeometry faces +Z. Rotate so its normal matches the picked face.
+    const q = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      sectionFaceNormal.clone().normalize()
+    );
+    sectionHelper.quaternion.copy(q);
+    // Place at projection of model center onto the cut plane:
+    // P = center + (signed - center·n) * n  where signed = pos (value along normal)
+    const nDotCenter = ctr.dot(sectionFaceNormal);
+    const planePt = ctr.clone().add(
+      sectionFaceNormal.clone().multiplyScalar(pos - nDotCenter)
+    );
+    sectionHelper.position.copy(planePt);
+  } else if (sectionAxis === 'X') {
+    sectionHelper.rotation.y = Math.PI / 2;
+    sectionHelper.position.set(pos, ctr.y, ctr.z);
+  } else if (sectionAxis === 'Y') {
+    sectionHelper.rotation.x = Math.PI / 2;
+    sectionHelper.position.set(ctr.x, pos, ctr.z);
+  } else {
+    sectionHelper.position.set(ctr.x, ctr.y, pos);
+  }
+
+  // Edge ring for the plane
+  const edgeGeo = new THREE.EdgesGeometry(helperGeo);
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0x00d4ff, transparent: true, opacity: 0.3 });
+  const edgeLine = new THREE.LineSegments(edgeGeo, edgeMat);
+  sectionHelper.add(edgeLine);
+
+  scene.add(sectionHelper);
+}
+
+function removeSectionHelper() {
+  if (sectionHelper) {
+    scene.remove(sectionHelper);
+    sectionHelper.geometry.dispose();
+    sectionHelper.material.dispose();
+    sectionHelper = null;
+  }
+}
+
+// ═══════════════════════════════════════
+//  EXPORT FUNCTIONS
+// ═══════════════════════════════════════
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ── Export visible parts as binary STL ──
+window.exportSTL = () => {
+  const vis = parts.filter(p => p.visible);
+  if (!vis.length) { alert('No visible parts to export.'); return; }
+
+  // Count triangles
+  let totalTris = 0;
+  vis.forEach(p => {
+    const geo = p.mesh.geometry;
+    totalTris += geo.index ? geo.index.count / 3 : geo.attributes.position.count / 3;
+  });
+
+  // Binary STL: 80-byte header + 4-byte count + 50 bytes per triangle
+  const buf = new ArrayBuffer(84 + totalTris * 50);
+  const dv = new DataView(buf);
+  const hdr = 'STP Viewer - visible parts export';
+  for (let i = 0; i < 80; i++) dv.setUint8(i, i < hdr.length ? hdr.charCodeAt(i) : 0);
+  dv.setUint32(80, totalTris, true);
+
+  let off = 84;
+  vis.forEach(p => {
+    const geo = p.mesh.geometry;
+    const pos = geo.attributes.position;
+    const nor = geo.attributes.normal;
+    const idx = geo.index;
+    const tc = idx ? idx.count / 3 : pos.count / 3;
+
+    for (let t = 0; t < tc; t++) {
+      const i0 = idx ? idx.getX(t*3)   : t*3;
+      const i1 = idx ? idx.getX(t*3+1) : t*3+1;
+      const i2 = idx ? idx.getX(t*3+2) : t*3+2;
+
+      // Face normal (from first vertex normal, or 0)
+      dv.setFloat32(off, nor ? nor.getX(i0) : 0, true); off += 4;
+      dv.setFloat32(off, nor ? nor.getY(i0) : 0, true); off += 4;
+      dv.setFloat32(off, nor ? nor.getZ(i0) : 0, true); off += 4;
+
+      // 3 vertices
+      for (const vi of [i0, i1, i2]) {
+        dv.setFloat32(off, pos.getX(vi), true); off += 4;
+        dv.setFloat32(off, pos.getY(vi), true); off += 4;
+        dv.setFloat32(off, pos.getZ(vi), true); off += 4;
+      }
+      dv.setUint16(off, 0, true); off += 2; // attribute byte count
+    }
+  });
+
+  downloadBlob(new Blob([buf], {type:'application/octet-stream'}), originalFileName + '_visible.stl');
+};
+
+// ── Export filtered STEP (remove hidden parts) ──
+window.exportFilteredSTEP = () => {
+  if (!originalStepText) { alert('No STEP file loaded.'); return; }
+  if (!parts.length) { alert('No parts loaded.'); return; }
+
+  // Build name → {hidden count, visible count} so we can decide PER STEP-PRODUCT
+  // whether to drop it. A PRODUCT is dropped only when EVERY in-app part with
+  // that original name is hidden — otherwise some visible instance still needs
+  // the geometry and we keep it.
+  // We match against origName (the name as it was on load) so user renames in
+  // the UI don't break the export.
+  const counts = new Map(); // origName → { hidden, visible }
+  for (const p of parts) {
+    const key = p.origName || p.name;
+    if (!counts.has(key)) counts.set(key, { hidden: 0, visible: 0 });
+    const c = counts.get(key);
+    if (p.visible) c.visible++; else c.hidden++;
+  }
+
+  const hiddenNames  = new Set();
+  const visibleNames = new Set();
+  for (const [name, c] of counts) {
+    if (c.visible === 0 && c.hidden > 0) hiddenNames.add(name);
+    else visibleNames.add(name);
+  }
+
+  if (!parts.some(p => p.visible)) { alert('No visible parts to save.'); return; }
+
+  // Nothing fully-hidden → save original as-is
+  if (!hiddenNames.size) {
+    downloadBlob(new Blob([originalStepText], {type:'text/plain'}), originalFileName + '.stp');
+    return;
+  }
+
+  showLoad('Filtering STEP file…');
+
+  try {
+    const filtered = filterStepByVisibility(originalStepText, hiddenNames, visibleNames);
+    downloadBlob(new Blob([filtered], {type:'text/plain'}), originalFileName + '_visible.stp');
+  } catch (err) {
+    console.error('STEP filter error:', err);
+    alert('STEP filtering failed: ' + err.message + '\n\nFalling back to STL export.');
+    exportSTL();
+  } finally {
+    hideLoad();
+  }
+};
+
+function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
+  // Split into HEADER and DATA sections
+  const dataStart = stepText.indexOf('DATA;');
+  const dataEnd   = stepText.indexOf('ENDSEC;', dataStart);
+  if (dataStart < 0 || dataEnd < 0) throw new Error('Cannot parse STEP structure.');
+
+  const before = stepText.substring(0, dataStart + 5); // up to and including DATA;
+  const after  = stepText.substring(dataEnd);           // ENDSEC; ... END-ISO-10303-21;
+  const dataBlock = stepText.substring(dataStart + 5, dataEnd);
+
+  // Normalize: join multi-line entity definitions into single lines
+  const rawLines = dataBlock.split(/\r?\n/);
+  const entityLines = [];
+  let accumulator = '';
+  for (const line of rawLines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === '') continue;
+    accumulator += (accumulator ? ' ' : '') + trimmed;
+    if (accumulator.endsWith(';')) {
+      entityLines.push(accumulator);
+      accumulator = '';
+    }
+  }
+  if (accumulator.trim()) entityLines.push(accumulator.trim());
+
+  // Parse each entity: #ID = TYPE(args); or #ID = (COMPLEX_TYPE(args)...);
+  const entities = new Map(); // id → {id, type, args, fullLine, refs}
+  for (const line of entityLines) {
+    // Match simple: #10 = PRODUCT('name', ...);
+    let m = line.match(/^#(\d+)\s*=\s*([\w]+)\s*\(([\s\S]*)\)\s*;$/);
+    if (m) {
+      const id = parseInt(m[1]);
+      const type = m[2].toUpperCase();
+      const args = m[3];
+      const refs = [...args.matchAll(/#(\d+)/g)].map(r => parseInt(r[1]));
+      entities.set(id, { id, type, args, fullLine: line, refs });
+      continue;
+    }
+    // Match complex: #50 = ( TYPE1(...) TYPE2(...) );
+    m = line.match(/^#(\d+)\s*=\s*\(\s*([\s\S]*)\)\s*;$/);
+    if (m) {
+      const id = parseInt(m[1]);
+      const body = m[2];
+      // Extract all type names from the complex entity
+      const types = [...body.matchAll(/([\w]+)\s*\(/g)].map(r => r[1].toUpperCase());
+      const type = types.join('+'); // Combined type string for matching
+      const refs = [...body.matchAll(/#(\d+)/g)].map(r => parseInt(r[1]));
+      entities.set(id, { id, type, args: body, fullLine: line, refs });
+    }
+  }
+
+  // Build reverse reference map: id → set of ids that reference it
+  const reverseRefs = new Map();
+  for (const [id, ent] of entities) {
+    for (const ref of ent.refs) {
+      if (!reverseRefs.has(ref)) reverseRefs.set(ref, new Set());
+      reverseRefs.get(ref).add(id);
+    }
+  }
+
+  // Find PRODUCT entities and match to hidden/visible names
+  const hiddenProductIds  = new Set();
+  const visibleProductIds = new Set();
+
+  for (const [id, ent] of entities) {
+    if (ent.type === 'PRODUCT') {
+      // Extract the product name (first string argument)
+      const nameMatch = ent.args.match(/'([^']*)'/);
+      if (nameMatch) {
+        const name = nameMatch[1];
+        if (hiddenNames.has(name))       hiddenProductIds.add(id);
+        else if (visibleNames.has(name)) visibleProductIds.add(id);
+      }
+    }
+  }
+
+  console.log(`STEP filter: ${hiddenProductIds.size} hidden products, ${visibleProductIds.size} visible products out of ${entities.size} entities`);
+
+  // If we can't identify any products, fall back to original
+  if (hiddenProductIds.size === 0) {
+    console.warn('Could not match any hidden part names to STEP PRODUCT entities. Saving original.');
+    return stepText;
+  }
+
+  // Collect entity IDs reachable from a set of product IDs
+  // Uses reverse BFS (entities that DEPEND on these products)
+  // then forward BFS from SHAPE_DEFINITION_REPRESENTATION to collect geometry
+  function collectProductEntities(productIds) {
+    const collected = new Set();
+    const queue = [...productIds];
+    const visited = new Set(queue);
+
+    // Phase 1: Reverse BFS — find entities that reference these products
+    // (PRODUCT_DEFINITION_FORMATION → PRODUCT_DEFINITION → PRODUCT_DEFINITION_SHAPE
+    //  → SHAPE_DEFINITION_REPRESENTATION → NEXT_ASSEMBLY_USAGE_OCCURRENCE etc.)
+    while (queue.length) {
+      const cur = queue.shift();
+      collected.add(cur);
+      const deps = reverseRefs.get(cur);
+      if (!deps) continue;
+      for (const depId of deps) {
+        if (visited.has(depId)) continue;
+        const depEnt = entities.get(depId);
+        if (!depEnt) continue;
+        // Only follow product-structure types in reverse
+        const followTypes = [
+          'PRODUCT_DEFINITION_FORMATION',
+          'PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE',
+          'PRODUCT_DEFINITION',
+          'PRODUCT_DEFINITION_SHAPE',
+          'SHAPE_DEFINITION_REPRESENTATION',
+          'PRODUCT_DEFINITION_CONTEXT',
+          'PRODUCT_RELATED_PRODUCT_CATEGORY',
+          'PRODUCT_CATEGORY',
+          'NEXT_ASSEMBLY_USAGE_OCCURRENCE',
+          'CONTEXT_DEPENDENT_SHAPE_REPRESENTATION',
+          'REPRESENTATION_RELATIONSHIP',
+          'REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION',
+          'ITEM_DEFINED_TRANSFORMATION',
+          'SHAPE_REPRESENTATION_RELATIONSHIP',
+        ];
+        if (followTypes.includes(depEnt.type)) {
+          visited.add(depId);
+          queue.push(depId);
+        }
+      }
+    }
+
+    // Phase 2: Forward BFS from SHAPE_DEFINITION_REPRESENTATION to collect geometry
+    const sdrIds = [...collected].filter(id => {
+      const e = entities.get(id);
+      return e && e.type === 'SHAPE_DEFINITION_REPRESENTATION';
+    });
+
+    // From each SDR, find the SHAPE_REPRESENTATION it references
+    const shapeRepIds = new Set();
+    for (const sdrId of sdrIds) {
+      const sdr = entities.get(sdrId);
+      if (!sdr) continue;
+      for (const ref of sdr.refs) {
+        const refEnt = entities.get(ref);
+        if (refEnt && (refEnt.type.includes('SHAPE_REPRESENTATION') ||
+            refEnt.type.includes('BREP_SHAPE_REPRESENTATION') ||
+            refEnt.type.includes('GEOMETRICALLY_BOUNDED') ||
+            refEnt.type.includes('MANIFOLD_SURFACE'))) {
+          shapeRepIds.add(ref);
+        }
+      }
+    }
+
+    // Forward BFS from shape representations to collect all geometry
+    const geoQueue = [...shapeRepIds];
+    const geoVisited = new Set(geoQueue);
+    while (geoQueue.length) {
+      const cur = geoQueue.shift();
+      collected.add(cur);
+      const ent = entities.get(cur);
+      if (!ent) continue;
+      // Don't follow into shared context entities
+      if (ent.type.includes('REPRESENTATION_CONTEXT') ||
+          ent.type.includes('GLOBAL_UNCERTAINTY') ||
+          ent.type.includes('GLOBAL_UNIT') ||
+          ent.type.includes('GEOMETRIC_REPRESENTATION_CONTEXT') ||
+          ent.type.includes('APPLICATION_CONTEXT') ||
+          ent.type.includes('APPLICATION_PROTOCOL') ||
+          (ent.type.includes('_UNIT') && !ent.type.includes('VERTEX'))) continue;
+      for (const ref of ent.refs) {
+        if (!geoVisited.has(ref)) {
+          geoVisited.add(ref);
+          geoQueue.push(ref);
+        }
+      }
+    }
+
+    return collected;
+  }
+
+  const hiddenEntities  = collectProductEntities(hiddenProductIds);
+  const visibleEntities = collectProductEntities(visibleProductIds);
+
+  // Only remove entities that belong EXCLUSIVELY to hidden products
+  const toRemove = new Set();
+  for (const id of hiddenEntities) {
+    if (!visibleEntities.has(id)) {
+      toRemove.add(id);
+    }
+  }
+
+  // Also always remove the hidden PRODUCT entities themselves
+  for (const id of hiddenProductIds) toRemove.add(id);
+
+  console.log(`STEP filter: removing ${toRemove.size} entities of ${entities.size} total`);
+
+  // Rebuild DATA section without removed entities
+  const keptLines = entityLines.filter(line => {
+    const m = line.match(/^#(\d+)/);
+    if (!m) return true;
+    return !toRemove.has(parseInt(m[1]));
+  });
+
+  return before + '\n' + keptLines.join('\n') + '\n' + after;
+}
+
+// ═══════════════════════════════════════
+//  MIN DISTANCE BETWEEN TWO PARTS
+// ═══════════════════════════════════════
+
+function highlightMinDistPart(idx, hexColor) {
+  const p = parts[idx];
+  if (p._minDistOrig) return;
+  p._minDistOrig = p.mesh.material;
+  const hl = p.origMat.clone();
+  hl.emissive = new THREE.Color(hexColor);
+  hl.emissiveIntensity = 0.9;
+  p.mesh.material = hl;
+}
+
+function unhighlightMinDistPart(idx) {
+  const p = parts[idx];
+  if (!p || !p._minDistOrig) return;
+  p.mesh.material = p._minDistOrig;
+  p._minDistOrig = null;
+}
+
+function clearMinDistPending() {
+  minDistPending.forEach(i => unhighlightMinDistPart(i));
+  minDistPending = [];
+}
+
+function handleMinDistPick(idx) {
+  // Prevent picking the same part twice
+  if (minDistPending.length === 1 && minDistPending[0] === idx) {
+    document.getElementById('m-hint').textContent = 'Pick a DIFFERENT part for Part 2.';
+    return;
+  }
+
+  minDistPending.push(idx);
+
+  if (minDistPending.length === 1) {
+    highlightMinDistPart(idx, 0xff6b35);  // orange for part 1
+    document.getElementById('m-hint').innerHTML =
+      `<span style="color:var(--accent2)">● Part 1: ${parts[idx].name}</span> — now click Part 2.`;
+    return;
+  }
+
+  // We have two parts — compute
+  highlightMinDistPart(idx, 0x00d4ff);  // cyan for part 2
+  const idxA = minDistPending[0], idxB = minDistPending[1];
+  document.getElementById('m-hint').textContent = 'Computing closest distance…';
+
+  // Defer so the hint paints
+  setTimeout(() => {
+    try {
+      const meshA = parts[idxA].mesh;
+      const meshB = parts[idxB].mesh;
+      const result = computeClosestBetweenMeshes(meshA, meshB);
+
+      if (!result || !result.pA || !result.pB) {
+        document.getElementById('m-hint').textContent = 'Could not compute — empty geometry?';
+        clearMinDistPending();
+        return;
+      }
+
+      // If distance is effectively zero, the parts touch or clash — run clash detection
+      const eps = modelBBox
+        ? modelBBox.getSize(new THREE.Vector3()).length() * 1e-5
+        : 1e-4;
+
+      if (result.dist <= eps) {
+        document.getElementById('m-hint').innerHTML =
+          '<span style="color:#ff3355">⚠ Parts overlap</span> — computing clash region…';
+        // Yield again so the hint paints before the heavy clash compute
+        setTimeout(() => {
+          try {
+            const clash = computeClash(meshA, meshB);
+            addClashMeasurement(idxA, idxB, clash);
+          } catch (err) {
+            console.error(err);
+            document.getElementById('m-hint').textContent = 'Clash error: ' + err.message;
+          } finally {
+            clearMinDistPending();
+          }
+        }, 30);
+        return;  // clearMinDistPending handled in inner setTimeout
+      }
+
+      addMinDistMeasurement(idxA, idxB, result);
+      clearMinDistPending();
+    } catch (err) {
+      console.error(err);
+      document.getElementById('m-hint').textContent = 'Error: ' + err.message;
+      clearMinDistPending();
+    }
+  }, 30);
+}
+
+function addMinDistMeasurement(idxA, idxB, result) {
+  const p1 = result.pA, p2 = result.pB;
+  const dist = result.dist;
+  const ddx = Math.abs(p2.x - p1.x);
+  const ddy = Math.abs(p2.y - p1.y);
+  const ddz = Math.abs(p2.z - p1.z);
+  const id = ++mCount;
+
+  // Auto-scale sphere size
+  const sphereR = getMeasureBallRadius();
+
+  const geo = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+  const mat = new THREE.LineBasicMaterial({ color: 0x00d4ff, linewidth: 2, clippingPlanes: [] });
+  const line = new THREE.Line(geo, mat);
+  scene.add(line);
+
+  [p1, p2].forEach(pt => {
+    const sg = new THREE.SphereGeometry(sphereR, 12, 12);
+    const sm = new THREE.MeshBasicMaterial({ color: 0x00d4ff, clippingPlanes: [] });
+    const s = new THREE.Mesh(sg, sm);
+    s.position.copy(pt);
+    scene.add(s);
+    line.userData.spheres = line.userData.spheres || [];
+    line.userData.spheres.push(s);
+  });
+
+  const label = `${parts[idxA].name} ↔ ${parts[idxB].name}`;
+  measurements.push({
+    id, p1, p2, dist, dx: ddx, dy: ddy, dz: ddz, line,
+    tag: `D${id}`, label
+  });
+  renderMeasures();
+
+  document.getElementById('m-hint').innerHTML =
+    `<span style="color:var(--accent)">Min dist = ${dist.toFixed(3)}</span><br>Click Part 1 for next pair.`;
+
+  // Log closest points for debugging
+  console.log(`Min distance ${dist.toFixed(4)} between "${parts[idxA].name}" and "${parts[idxB].name}"`);
+  console.log(`  Point on A: (${p1.x.toFixed(3)}, ${p1.y.toFixed(3)}, ${p1.z.toFixed(3)})`);
+  console.log(`  Point on B: (${p2.x.toFixed(3)}, ${p2.y.toFixed(3)}, ${p2.z.toFixed(3)})`);
+}
+
+// Extract world-space triangles with per-triangle AABB for rejection
+function extractWorldTris(mesh) {
+  mesh.updateMatrixWorld(true);
+  const geom = mesh.geometry;
+  const pos = geom.attributes.position;
+  const idx = geom.index;
+  const mat = mesh.matrixWorld;
+  const triCount = idx ? (idx.count / 3) : (pos.count / 3);
+  const tris = new Array(triCount);
+  const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
+  for (let i = 0; i < triCount; i++) {
+    let a, b, c;
+    if (idx) { a = idx.getX(i*3); b = idx.getX(i*3+1); c = idx.getX(i*3+2); }
+    else     { a = i*3;           b = i*3+1;           c = i*3+2; }
+    va.fromBufferAttribute(pos, a).applyMatrix4(mat);
+    vb.fromBufferAttribute(pos, b).applyMatrix4(mat);
+    vc.fromBufferAttribute(pos, c).applyMatrix4(mat);
+    const tri = new THREE.Triangle(va.clone(), vb.clone(), vc.clone());
+    const box = new THREE.Box3().setFromPoints([tri.a, tri.b, tri.c]);
+    tris[i] = { tri, box };
+  }
+  return tris;
+}
+
+// Extract world-space vertices (optionally sampled for very dense meshes)
+function extractWorldVerts(mesh, maxVerts) {
+  mesh.updateMatrixWorld(true);
+  const pos = mesh.geometry.attributes.position;
+  const mat = mesh.matrixWorld;
+  const n = pos.count;
+  const step = (maxVerts && n > maxVerts) ? Math.ceil(n / maxVerts) : 1;
+  const out = [];
+  const v = new THREE.Vector3();
+  for (let i = 0; i < n; i += step) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(mat);
+    out.push(v.clone());
+  }
+  return out;
+}
+
+/**
+ * Closest-distance between two triangle meshes.
+ * Approach: for each vertex of A, find the closest point on any triangle of B
+ * (with per-triangle AABB rejection against the running best); then repeat swapped.
+ * This is exact when the closest point lies on a vertex of one mesh or on a
+ * triangle of the other. For typical CAD parts (non-interpenetrating) this is
+ * the correct answer. If the parts interpenetrate the reported distance may be
+ * ~0 even if the true distance is negative.
+ */
+function computeClosestBetweenMeshes(meshA, meshB) {
+  const MAX_VERTS = 8000;  // per mesh sampling cap
+
+  const trisA = extractWorldTris(meshA);
+  const trisB = extractWorldTris(meshB);
+  const vertsA = extractWorldVerts(meshA, MAX_VERTS);
+  const vertsB = extractWorldVerts(meshB, MAX_VERTS);
+
+  if (!trisA.length || !trisB.length) return null;
+
+  let best = Infinity;
+  let bestA = null, bestB = null;
+  const tmp = new THREE.Vector3();
+
+  // Quick seed from bbox centers so early rejection kicks in faster
+  const boxA = new THREE.Box3().setFromObject(meshA);
+  const boxB = new THREE.Box3().setFromObject(meshB);
+  const cA = boxA.getCenter(new THREE.Vector3());
+  const cB = boxB.getCenter(new THREE.Vector3());
+  // Seed an upper bound: closest vert of A to center of B
+  for (const va of vertsA) {
+    const d = va.distanceTo(cB);
+    if (d < best) { best = d; bestA = va; bestB = cB.clone(); }
+  }
+
+  // Pass 1: verts of A against tris of B
+  for (let i = 0; i < vertsA.length; i++) {
+    const va = vertsA[i];
+    for (let j = 0; j < trisB.length; j++) {
+      const tb = trisB[j];
+      if (tb.box.distanceToPoint(va) >= best) continue;
+      tb.tri.closestPointToPoint(va, tmp);
+      const d = va.distanceTo(tmp);
+      if (d < best) {
+        best = d;
+        bestA = va.clone();
+        bestB = tmp.clone();
+        if (best === 0) return { dist: 0, pA: bestA, pB: bestB };
+      }
+    }
+  }
+
+  // Pass 2: verts of B against tris of A
+  for (let i = 0; i < vertsB.length; i++) {
+    const vb = vertsB[i];
+    for (let j = 0; j < trisA.length; j++) {
+      const ta = trisA[j];
+      if (ta.box.distanceToPoint(vb) >= best) continue;
+      ta.tri.closestPointToPoint(vb, tmp);
+      const d = vb.distanceTo(tmp);
+      if (d < best) {
+        best = d;
+        bestA = tmp.clone();
+        bestB = vb.clone();
+        if (best === 0) return { dist: 0, pA: bestA, pB: bestB };
+      }
+    }
+  }
+
+  return { dist: best, pA: bestA, pB: bestB };
+}
+
+// ─── CLASH DETECTION ────────────────────────────────────────────
+
+/**
+ * Compute the line segment where two triangles intersect.
+ * Returns null if they don't intersect (or only touch at a point).
+ * Uses the standard method: intersect each triangle's edges with the
+ * other triangle's plane, keep only hits that lie inside the other
+ * triangle, then pick the two most distant collected points.
+ */
+const _planeA = new THREE.Plane();
+const _planeB = new THREE.Plane();
+const _line3  = new THREE.Line3();
+
+function triTriIntersect(a, b) {
+  a.getPlane(_planeA);
+  b.getPlane(_planeB);
+
+  // Quick reject: if all vertices of a lie strictly on one side of b's plane, no hit
+  const da0 = _planeB.distanceToPoint(a.a);
+  const da1 = _planeB.distanceToPoint(a.b);
+  const da2 = _planeB.distanceToPoint(a.c);
+  if ((da0 >  1e-9 && da1 >  1e-9 && da2 >  1e-9) ||
+      (da0 < -1e-9 && da1 < -1e-9 && da2 < -1e-9)) return null;
+  const db0 = _planeA.distanceToPoint(b.a);
+  const db1 = _planeA.distanceToPoint(b.b);
+  const db2 = _planeA.distanceToPoint(b.c);
+  if ((db0 >  1e-9 && db1 >  1e-9 && db2 >  1e-9) ||
+      (db0 < -1e-9 && db1 < -1e-9 && db2 < -1e-9)) return null;
+
+  const hits = [];
+
+  // Edges of A vs plane B, keep those inside triangle B
+  const edgesA = [[a.a, a.b], [a.b, a.c], [a.c, a.a]];
+  for (const [p, q] of edgesA) {
+    _line3.start = p; _line3.end = q;
+    const hit = new THREE.Vector3();
+    const res = _planeB.intersectLine(_line3, hit);
+    if (res && b.containsPoint(hit)) hits.push(hit);
+  }
+  const edgesB = [[b.a, b.b], [b.b, b.c], [b.c, b.a]];
+  for (const [p, q] of edgesB) {
+    _line3.start = p; _line3.end = q;
+    const hit = new THREE.Vector3();
+    const res = _planeA.intersectLine(_line3, hit);
+    if (res && a.containsPoint(hit)) hits.push(hit);
+  }
+
+  if (hits.length < 2) return null;
+
+  // Pick the two most distant collected points (robust to degenerate cases)
+  let maxD2 = 0, pa = null, pb = null;
+  for (let i = 0; i < hits.length; i++) {
+    for (let j = i + 1; j < hits.length; j++) {
+      const d2 = hits[i].distanceToSquared(hits[j]);
+      if (d2 > maxD2) { maxD2 = d2; pa = hits[i]; pb = hits[j]; }
+    }
+  }
+  if (!pa || maxD2 < 1e-14) return null;
+  return [pa, pb];
+}
+
+/**
+ * Simple uniform 3D grid for triangle AABB buckets.
+ * Used to reject most non-candidate triangle pairs quickly during clash
+ * detection, bringing worst-case O(N*M) down to near-linear for typical CAD.
+ */
+function buildTriGrid(tris, overallBox, targetDivs) {
+  targetDivs = targetDivs || 24;
+  const size = overallBox.getSize(new THREE.Vector3());
+  const cx = (size.x / targetDivs) || 1;
+  const cy = (size.y / targetDivs) || 1;
+  const cz = (size.z / targetDivs) || 1;
+  const min = overallBox.min.clone();
+  const grid = new Map();
+
+  for (let i = 0; i < tris.length; i++) {
+    const tb = tris[i].box;
+    const x0 = Math.floor((tb.min.x - min.x) / cx);
+    const y0 = Math.floor((tb.min.y - min.y) / cy);
+    const z0 = Math.floor((tb.min.z - min.z) / cz);
+    const x1 = Math.floor((tb.max.x - min.x) / cx);
+    const y1 = Math.floor((tb.max.y - min.y) / cy);
+    const z1 = Math.floor((tb.max.z - min.z) / cz);
+    for (let ix = x0; ix <= x1; ix++)
+      for (let iy = y0; iy <= y1; iy++)
+        for (let iz = z0; iz <= z1; iz++) {
+          const k = ix + ',' + iy + ',' + iz;
+          let list = grid.get(k);
+          if (!list) { list = []; grid.set(k, list); }
+          list.push(i);
+        }
+  }
+  return { grid, min, cx, cy, cz };
+}
+
+function queryTriGrid(g, box) {
+  const x0 = Math.floor((box.min.x - g.min.x) / g.cx);
+  const y0 = Math.floor((box.min.y - g.min.y) / g.cy);
+  const z0 = Math.floor((box.min.z - g.min.z) / g.cz);
+  const x1 = Math.floor((box.max.x - g.min.x) / g.cx);
+  const y1 = Math.floor((box.max.y - g.min.y) / g.cy);
+  const z1 = Math.floor((box.max.z - g.min.z) / g.cz);
+  const out = new Set();
+  for (let ix = x0; ix <= x1; ix++)
+    for (let iy = y0; iy <= y1; iy++)
+      for (let iz = z0; iz <= z1; iz++) {
+        const list = g.grid.get(ix + ',' + iy + ',' + iz);
+        if (list) for (const v of list) out.add(v);
+      }
+  return out;
+}
+
+/**
+ * Triangle-triangle intersection sweep between two meshes.
+ * Returns: { segments, clashTrisA, clashTrisB, clashBox, clashLength }
+ */
+function computeClash(meshA, meshB) {
+  const trisA = extractWorldTris(meshA);
+  const trisB = extractWorldTris(meshB);
+
+  const segments = [];
+  const clashTrisA = new Set();
+  const clashTrisB = new Set();
+  const clashBox = new THREE.Box3();
+
+  if (!trisA.length || !trisB.length) {
+    return { segments, clashTrisA, clashTrisB, clashBox: null, clashLength: 0 };
+  }
+
+  // Overall AABBs for early reject and for grid extent
+  const boxA = new THREE.Box3();
+  const boxB = new THREE.Box3();
+  for (const t of trisA) boxA.union(t.box);
+  for (const t of trisB) boxB.union(t.box);
+
+  if (!boxA.intersectsBox(boxB)) {
+    return { segments, clashTrisA, clashTrisB, clashBox: null, clashLength: 0 };
+  }
+
+  // Intersection region — only pairs overlapping this region can clash
+  const region = boxA.clone().intersect(boxB);
+  // Expand slightly to avoid floating-point edge misses
+  const regionSize = region.getSize(new THREE.Vector3());
+  const pad = regionSize.length() * 1e-6 + 1e-9;
+  region.expandByScalar(pad);
+
+  // Build a grid on B's triangles (only those inside the region)
+  const trisB_inRegion = [];
+  for (let j = 0; j < trisB.length; j++) {
+    if (trisB[j].box.intersectsBox(region)) trisB_inRegion.push(j);
+  }
+  if (!trisB_inRegion.length) {
+    return { segments, clashTrisA, clashTrisB, clashBox: null, clashLength: 0 };
+  }
+  const regionForGrid = region.clone();
+  const gridTrisB = trisB_inRegion.map(j => trisB[j]);
+  const g = buildTriGrid(gridTrisB, regionForGrid, 24);
+
+  let clashLength = 0;
+  let pairTests = 0;
+
+  for (let i = 0; i < trisA.length; i++) {
+    const ta = trisA[i];
+    if (!ta.box.intersectsBox(region)) continue;
+
+    const candidates = queryTriGrid(g, ta.box);
+    for (const localIdx of candidates) {
+      const jGlobal = trisB_inRegion[localIdx];
+      const tb = trisB[jGlobal];
+      if (!ta.box.intersectsBox(tb.box)) continue;
+      pairTests++;
+      const seg = triTriIntersect(ta.tri, tb.tri);
+      if (seg) {
+        segments.push(seg);
+        clashTrisA.add(i);
+        clashTrisB.add(jGlobal);
+        clashBox.expandByPoint(seg[0]);
+        clashBox.expandByPoint(seg[1]);
+        clashLength += seg[0].distanceTo(seg[1]);
+      }
+    }
+  }
+
+  console.log(`Clash sweep: ${trisA.length} × ${trisB.length} tris → ${pairTests} narrow-phase tests, ${segments.length} intersections`);
+
+  return {
+    segments,
+    clashTrisA,
+    clashTrisB,
+    clashBox: clashBox.isEmpty() ? null : clashBox,
+    clashLength
+  };
+}
+
+/** Build a red semi-transparent overlay of the clashing triangles. */
+function buildClashOverlay(sourceMesh, triIndices, color) {
+  if (!triIndices.size) return null;
+  const geom = sourceMesh.geometry;
+  const pos = geom.attributes.position;
+  const idx = geom.index;
+  const mat = sourceMesh.matrixWorld;
+
+  const positions = new Float32Array(triIndices.size * 9);
+  let w = 0;
+  const v = new THREE.Vector3();
+  for (const i of triIndices) {
+    let a, b, c;
+    if (idx) { a = idx.getX(i*3); b = idx.getX(i*3+1); c = idx.getX(i*3+2); }
+    else     { a = i*3;           b = i*3+1;           c = i*3+2; }
+    [a, b, c].forEach(k => {
+      v.fromBufferAttribute(pos, k).applyMatrix4(mat);
+      positions[w++] = v.x;
+      positions[w++] = v.y;
+      positions[w++] = v.z;
+    });
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  g.computeVertexNormals();
+  const m = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.55,
+    side: THREE.DoubleSide,
+    depthTest: true,
+    clippingPlanes: []
+  });
+  return new THREE.Mesh(g, m);
+}
+
+/** Build a LineSegments object holding all intersection lines. */
+function buildSegmentsLines(segments, color) {
+  if (!segments.length) return null;
+  const positions = new Float32Array(segments.length * 6);
+  let w = 0;
+  for (const [a, b] of segments) {
+    positions[w++] = a.x; positions[w++] = a.y; positions[w++] = a.z;
+    positions[w++] = b.x; positions[w++] = b.y; positions[w++] = b.z;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const m = new THREE.LineBasicMaterial({
+    color,
+    linewidth: 3,
+    depthTest: false,
+    clippingPlanes: []
+  });
+  return new THREE.LineSegments(g, m);
+}
+
+function addClashMeasurement(idxA, idxB, clash) {
+  const id = ++mCount;
+
+  // If no clash was actually found (e.g. tangent-touching edge case), still
+  // drop a "touch" entry so the user isn't left without feedback.
+  if (!clash.segments.length || !clash.clashBox) {
+    measurements.push({
+      id, p1: new THREE.Vector3(), p2: new THREE.Vector3(),
+      dist: 0, dx: 0, dy: 0, dz: 0,
+      line: { userData: {} },  // stub so delete works
+      tag: `T${id}`,
+      label: `TOUCH: ${parts[idxA].name} ↔ ${parts[idxB].name} (no interpenetration)`
+    });
+    renderMeasures();
+    document.getElementById('m-hint').innerHTML =
+      '<span style="color:var(--accent)">Parts touch, no overlap.</span><br>Click Part 1 for next pair.';
+    return;
+  }
+
+  const cb = clash.clashBox;
+  const size = cb.getSize(new THREE.Vector3());
+  const center = cb.getCenter(new THREE.Vector3());
+  const p1 = cb.min.clone();
+  const p2 = cb.max.clone();
+
+  // Red intersection-curve line segments
+  const segLines = buildSegmentsLines(clash.segments, 0xff0033);
+  scene.add(segLines);
+
+  // Red overlay meshes for the clashing triangles
+  const overlayA = buildClashOverlay(parts[idxA].mesh, clash.clashTrisA, 0xff0033);
+  const overlayB = buildClashOverlay(parts[idxB].mesh, clash.clashTrisB, 0xff5577);
+  if (overlayA) scene.add(overlayA);
+  if (overlayB) scene.add(overlayB);
+
+  // Red bounding-box helper
+  const boxHelper = new THREE.Box3Helper(cb.clone(), 0xff0033);
+  scene.add(boxHelper);
+
+  // The "line" anchor object for this measurement — use the segLines so
+  // delete/clear picks it up via the existing line.userData.extras path.
+  segLines.userData.extras = [];
+  if (overlayA) segLines.userData.extras.push(overlayA);
+  if (overlayB) segLines.userData.extras.push(overlayB);
+  segLines.userData.extras.push(boxHelper);
+
+  const totalTris = clash.clashTrisA.size + clash.clashTrisB.size;
+  const label =
+    `CLASH: ${parts[idxA].name} ↔ ${parts[idxB].name}<br>` +
+    `${clash.clashTrisA.size} + ${clash.clashTrisB.size} tris · ` +
+    `curve len ${clash.clashLength.toFixed(2)}`;
+
+  measurements.push({
+    id,
+    p1, p2,
+    dist: clash.clashLength,       // total intersection-curve length
+    dx: size.x, dy: size.y, dz: size.z,
+    line: segLines,                // anchor for delete
+    tag: `C${id}`,
+    label
+  });
+  renderMeasures();
+
+  document.getElementById('m-hint').innerHTML =
+    `<span style="color:#ff3355">⚠ CLASH found</span> — ${totalTris} tris, ` +
+    `extent ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)}<br>` +
+    `Click Part 1 for next pair.`;
+
+  console.log(`CLASH "${parts[idxA].name}" vs "${parts[idxB].name}":`);
+  console.log(`  ${clash.segments.length} intersection segments`);
+  console.log(`  curve length: ${clash.clashLength.toFixed(4)}`);
+  console.log(`  bbox: ${size.x.toFixed(3)} x ${size.y.toFixed(3)} x ${size.z.toFixed(3)}`);
+  console.log(`  center: (${center.x.toFixed(3)}, ${center.y.toFixed(3)}, ${center.z.toFixed(3)})`);
+}
+
+window.toggleMinDist = () => {
+  minDistMode = !minDistMode;
+  // Deactivate measure mode if enabling min-dist
+  if (minDistMode && measureMode) {
+    measureMode = false;
+    cleanupPendingMeasure();
+    document.getElementById('btn-measure').classList.remove('active');
+  }
+  clearMinDistPending();
+  document.getElementById('btn-mindist').classList.toggle('active', minDistMode);
+  document.getElementById('m-hint').textContent = minDistMode
+    ? 'Click Part 1 on the model…'
+    : 'Enable Measure or Min Dist mode, then click on the model.';
+  document.getElementById('canvas').style.cursor = minDistMode ? 'crosshair' : 'default';
+};
+
+window.toggleMeasure = () => {
+  measureMode = !measureMode;
+  // Deactivate min-dist mode if enabling measure
+  if (measureMode && minDistMode) {
+    minDistMode = false;
+    clearMinDistPending();
+    document.getElementById('btn-mindist').classList.remove('active');
+  }
+  cleanupPendingMeasure();
+  document.getElementById('btn-measure').classList.toggle('active', measureMode);
+  document.getElementById('m-hint').textContent = measureMode
+    ? 'Click Point 1 on the model…'
+    : 'Enable Measure or Min Dist mode, then click on the model.';
+  document.getElementById('canvas').style.cursor = measureMode ? 'crosshair' : 'default';
+
+  // Shrink spheres and dim lines when leaving measure mode, restore when entering
+  const s = measureMode ? 1 : 0.35;
+  const lineOpacity = measureMode ? 1.0 : 0.4;
+  measurements.forEach(m => {
+    (m.line.userData.spheres || []).forEach(sp => {
+      sp.scale.setScalar(s);
+      sp.material.transparent = true;
+      sp.material.opacity = lineOpacity;
+      sp.material.needsUpdate = true;
+    });
+    m.line.material.transparent = true;
+    m.line.material.opacity = lineOpacity;
+    m.line.material.needsUpdate = true;
+  });
+};
+
+window.clearMeasurements = () => {
+  measurements.forEach(m => {
+    scene.remove(m.line);
+    (m.line.userData.spheres || []).forEach(s => scene.remove(s));
+    (m.line.userData.extras || []).forEach(o => {
+      scene.remove(o);
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) o.material.dispose();
+    });
+  });
+  measurements = [];
+  cleanupPendingMeasure();
+  clearMinDistPending();
+  renderMeasures();
+  if (measureMode) document.getElementById('m-hint').textContent = 'Click Point 1 on the model…';
+  else if (minDistMode) document.getElementById('m-hint').textContent = 'Click Part 1 on the model…';
+};
+
+window.showAll = () => parts.forEach((_, i) => { if (!parts[i].visible) togglePartUI(i); });
+window.hideAll = () => parts.forEach((_, i) => { if (parts[i].visible) togglePartUI(i); });
+
+// ═══════════════════════════════════════
+//  AXIS GIZMO
+// ═══════════════════════════════════════
+const gc = document.getElementById('gizmo');
+gc.width = 76; gc.height = 76;
+const gx = gc.getContext('2d');
+
+function drawGizmo() {
+  gx.clearRect(0, 0, 76, 76);
+  gx.beginPath();
+  gx.arc(38, 38, 34, 0, Math.PI * 2);
+  gx.fillStyle = 'rgba(19,19,26,0.75)';
+  gx.fill();
+  gx.strokeStyle = '#252535';
+  gx.lineWidth = 1;
+  gx.stroke();
+
+  const mv = camera.matrixWorldInverse;
+  const axes = [
+    { lbl:'X', col:'#ff5555', v:new THREE.Vector3(1,0,0) },
+    { lbl:'Y', col:'#55ff55', v:new THREE.Vector3(0,1,0) },
+    { lbl:'Z', col:'#5599ff', v:new THREE.Vector3(0,0,1) },
+  ];
+
+  const proj = axes.map(a => {
+    const w = a.v.clone().applyMatrix4(mv);
+    return { ...a, px: w.x, py: -w.y, pz: w.z };
+  }).sort((a,b) => a.pz - b.pz);
+
+  proj.forEach(a => {
+    const ex = 38 + a.px * 26, ey = 38 + a.py * 26;
+    const dim = a.pz < 0;
+    gx.beginPath();
+    gx.moveTo(38, 38);
+    gx.lineTo(ex, ey);
+    gx.strokeStyle = a.col + (dim ? '55' : 'cc');
+    gx.lineWidth = 2;
+    gx.stroke();
+    gx.beginPath();
+    gx.arc(ex, ey, 5, 0, Math.PI * 2);
+    gx.fillStyle = a.col + (dim ? '55' : 'ff');
+    gx.fill();
+    gx.fillStyle = dim ? '#ffffff33' : '#ffffffcc';
+    gx.font = 'bold 8px ui-monospace, Consolas, monospace';
+    gx.textAlign = 'center';
+    gx.textBaseline = 'middle';
+    gx.fillText(a.lbl, ex, ey);
+  });
+}
+
+// ═══════════════════════════════════════
+//  UTILITY
+// ═══════════════════════════════════════
+function showLoad(msg) {
+  document.getElementById('loading-overlay').classList.remove('gone');
+  document.getElementById('loading-msg').textContent = msg;
+}
+function hideLoad() {
+  document.getElementById('loading-overlay').classList.add('gone');
+}
+
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = res;
+    s.onerror = () => rej(new Error('Failed to load: ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+// ═══════════════════════════════════════
+//  FILE INPUT
+// ═══════════════════════════════════════
+document.getElementById('file-input').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (f) { loadFile(f); e.target.value = ''; }
+});
+
+document.getElementById('part-color-picker').addEventListener('input', (e) => {
+  if (_colorPickIdx == null) return;
+  setPartColor(_colorPickIdx, e.target.value);
+});
+document.getElementById('part-color-picker').addEventListener('change', (e) => {
+  if (_colorPickIdx == null) return;
+  setPartColor(_colorPickIdx, e.target.value);
+  _colorPickIdx = null;
+});
+
+const vp = document.getElementById('viewport');
+vp.addEventListener('dragover', e => { e.preventDefault(); vp.classList.add('drag-over'); });
+vp.addEventListener('dragleave', () => vp.classList.remove('drag-over'));
+vp.addEventListener('drop', e => {
+  e.preventDefault();
+  vp.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (!f) return;
+  if (!/\.(stp|step)$/i.test(f.name)) { alert('Please drop a .stp or .step file.'); return; }
+  loadFile(f);
+});
+
+// ═══════════════════════════════════════
+//  START
+// ═══════════════════════════════════════
+initThree();
+</script>
+</body>
+</html>
