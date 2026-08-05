@@ -126,6 +126,10 @@ body.group-on .part-item.gsel{background:rgba(0,212,255,.08)}
   padding:2px;border-radius:2px;display:none;align-items:center;font-size:13px;
 }
 body.edit-on .group-row .gdelete{display:flex}
+.part-del{background:none;border:none;cursor:pointer;color:var(--text-dim);
+  padding:2px;border-radius:2px;display:none;align-items:center;font-size:12px;flex-shrink:0}
+body.edit-on .part-del{display:flex}
+.part-del:hover{color:#ff8080;background:rgba(255,128,128,.1)}
 .group-row .gdelete:hover{color:#ff8080;background:rgba(255,128,128,.1)}
 
 .group-row .gedit{
@@ -306,6 +310,9 @@ body.group-on .group-row .gedit{display:flex}
   <button class="btn primary" onclick="document.getElementById('file-input').click()">
     <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
     Open STP
+  </button>
+  <button class="btn" id="btn-close" onclick="closeFile()" title="Close current file" style="display:none">
+    <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Close
   </button>
   <input type="file" id="file-input" accept=".stp,.step">
   <input type="color" id="part-color-picker" style="position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;border:0;padding:0;margin:0;z-index:-1">
@@ -607,6 +614,7 @@ let modelBBox = null;    // bounding box of loaded model
 // Export state
 let originalStepText = null;
 let originalFileName = 'model';
+let deletedPartNames = new Set();
 let mPending = [];       // pending measure points (max 1)
 let measurements = [];   // {id, p1, p2, dist, line}
 let mCount = 0;
@@ -1461,6 +1469,7 @@ async function loadFile(file) {
     // Store original file for export
     originalStepText = new TextDecoder().decode(buf);
     originalFileName = file.name.replace(/\.(stp|step)$/i, '');
+    deletedPartNames = new Set();
 
     if (!result.success || !result.meshes || !result.meshes.length) {
       console.error('STEP parse result:', JSON.stringify(result, null, 2).slice(0, 2000));
@@ -1605,6 +1614,7 @@ async function loadFile(file) {
 
     buildPartsList();
     document.getElementById('drop-overlay').classList.add('gone');
+    document.getElementById('btn-close').style.display = '';
 
     // Compute model bounding box for measure scaling & section cut
     modelBBox = new THREE.Box3();
@@ -1686,6 +1696,7 @@ function partItemHTML(i, inGroup) {
            onclick="event.stopPropagation();pickPartColor(${i}, event)"></div>
       <span class="part-name"
             ondblclick="event.stopPropagation();partNameDblClick(${i})">${p.name}${p.isSurface ? ' <span style="font-size:9px;color:var(--accent);opacity:0.7">SRF</span>' : ''}</span>
+      <button class="part-del" onclick="event.stopPropagation();deletePart(${i})" title="Delete part">✕</button>
       <button class="vis-btn" id="vb-${i}" onclick="event.stopPropagation();togglePartUI(${i})" title="Toggle visibility">
         ${p.visible ? eyeOpen : eyeClose}
       </button>
@@ -1786,6 +1797,61 @@ window.togglePartUI = (idx) => {
       if (ge) ge.innerHTML = anyVis ? eyeOpen : eyeClose;
     }
   }
+};
+
+window.deletePart = (idx) => {
+  const p = parts[idx];
+  if (!p) return;
+  if (selIdx === idx) deselectPart();
+
+  deletedPartNames.add(p.origName || p.name);
+
+  scene.remove(p.mesh);
+  if (p.edges) scene.remove(p.edges);
+  if (p.wire) scene.remove(p.wire);
+  p.mesh.geometry.dispose();
+  p.mesh.material.dispose();
+  if (p.edges) { p.edges.geometry.dispose(); p.edges.material.dispose(); }
+  if (p.wire) { p.wire.geometry.dispose(); p.wire.material.dispose(); }
+
+  // Remove from any group
+  for (const g of groups) {
+    g.partIndices.delete(idx);
+    // Shift indices above the removed part down by 1
+    const shifted = new Set();
+    for (const i of g.partIndices) shifted.add(i > idx ? i - 1 : i);
+    g.partIndices = shifted;
+  }
+  // Remove empty groups
+  groups = groups.filter(g => g.partIndices.size > 0);
+
+  // Shift groupSelected indices
+  const newGroupSel = new Set();
+  for (const i of groupSelected) {
+    if (i === idx) continue;
+    newGroupSel.add(i > idx ? i - 1 : i);
+  }
+  groupSelected = newGroupSel;
+
+  parts.splice(idx, 1);
+
+  // Fix selIdx
+  if (selIdx !== null && selIdx > idx) selIdx--;
+
+  // Update model bbox
+  if (parts.length) {
+    modelBBox = new THREE.Box3();
+    parts.forEach(p => modelBBox.expandByObject(p.mesh));
+  }
+
+  // Update info
+  document.getElementById('i-parts').textContent = parts.length;
+  document.getElementById('part-count').textContent = parts.length;
+  const surfCount = parts.filter(p => p.isSurface).length;
+  document.getElementById('i-type').textContent = surfCount === 0 ? 'Solid'
+    : surfCount === parts.length ? 'Surface' : `Mixed (${surfCount} srf)`;
+
+  buildPartsList();
 };
 
 // ─── PART RENAME ───────────────────────────────
@@ -2949,9 +3015,14 @@ window.exportFilteredSTEP = async () => {
     else visibleNames.add(name);
   }
 
+  // Include permanently deleted parts as hidden
+  for (const name of deletedPartNames) {
+    if (!visibleNames.has(name)) hiddenNames.add(name);
+  }
+
   if (!parts.some(p => p.visible)) { alert('No visible parts to save.'); return; }
 
-  // Nothing fully-hidden → save original as-is
+  // Nothing fully-hidden or deleted → save original as-is
   if (!hiddenNames.size) {
     await downloadBlob(new Blob([originalStepText], {type:'text/plain'}), originalFileName + '.stp');
     return;
@@ -3930,6 +4001,67 @@ window.clearMeasurements = () => {
 
 window.showAll = () => parts.forEach((_, i) => { if (!parts[i].visible) togglePartUI(i); });
 window.hideAll = () => parts.forEach((_, i) => { if (parts[i].visible) togglePartUI(i); });
+
+window.closeFile = () => {
+  // Deselect
+  if (selIdx !== null) deselectPart();
+
+  // Remove all 3D part objects
+  parts.forEach(p => {
+    scene.remove(p.mesh);
+    if (p.edges) scene.remove(p.edges);
+    if (p.wire) scene.remove(p.wire);
+    p.mesh.geometry.dispose();
+    p.mesh.material.dispose();
+    if (p.edges) { p.edges.geometry.dispose(); p.edges.material.dispose(); }
+    if (p.wire) { p.wire.geometry.dispose(); p.wire.material.dispose(); }
+  });
+  parts = [];
+
+  // Clear groups
+  groups = [];
+  groupIdSeq = 1;
+  if (groupMode) { groupMode = false; document.body.classList.remove('group-on'); }
+  groupSelected = new Set();
+
+  // Clear measurements
+  clearMeasurements();
+
+  // Clear surface axes
+  clearSurfaceAxes();
+  if (axisMode) toggleAxisMode();
+
+  // Clear paint
+  clearPaint();
+  if (paintMode) togglePaint();
+
+  // Disable section
+  if (sectionActive) toggleSection();
+
+  // Disable modes
+  if (measureMode) toggleMeasure();
+  if (minDistMode) toggleMinDist();
+
+  // Reset export state
+  originalStepText = null;
+  originalFileName = 'model';
+  deletedPartNames = new Set();
+  modelBBox = null;
+
+  // Reset UI
+  document.getElementById('parts-list').innerHTML =
+    '<div class="no-parts">No file loaded.<br>Open a .stp or .step file.</div>';
+  document.getElementById('i-parts').textContent = '0';
+  document.getElementById('i-tris').textContent = '0';
+  document.getElementById('i-verts').textContent = '0';
+  document.getElementById('i-type').textContent = '—';
+  document.getElementById('part-count').textContent = '0';
+  document.getElementById('sel-box').textContent = 'No part selected';
+
+  // Show drop overlay, hide close button
+  document.getElementById('drop-overlay').classList.remove('gone');
+  document.getElementById('btn-close').style.display = 'none';
+};
 
 // ═══════════════════════════════════════
 //  AXIS GIZMO
