@@ -3035,14 +3035,19 @@ function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
   const hiddenProductIds  = new Set();
   const visibleProductIds = new Set();
 
+  const hiddenNorm  = new Set([...hiddenNames].map(n => n.trim().toLowerCase()));
+  const visibleNorm = new Set([...visibleNames].map(n => n.trim().toLowerCase()));
+  const normToOrigHidden  = new Map([...hiddenNames].map(n => [n.trim().toLowerCase(), n]));
+  const normToOrigVisible = new Map([...visibleNames].map(n => [n.trim().toLowerCase(), n]));
+
   for (const [id, ent] of entities) {
     if (ent.type === 'PRODUCT') {
-      // Extract the product name (first string argument)
       const nameMatch = ent.args.match(/'([^']*)'/);
       if (nameMatch) {
-        const name = nameMatch[1];
-        if (hiddenNames.has(name))       hiddenProductIds.add(id);
-        else if (visibleNames.has(name)) visibleProductIds.add(id);
+        const rawName = nameMatch[1];
+        const norm = rawName.trim().toLowerCase();
+        if (hiddenNorm.has(norm))       hiddenProductIds.add(id);
+        else if (visibleNorm.has(norm)) visibleProductIds.add(id);
       }
     }
   }
@@ -3823,37 +3828,43 @@ function renderAxes() {
         <span style="color:#5599ff">∠Z ${a.angZ.toFixed(1)}°</span>
       </div>
     </div>`).join('');
+  showAxisPanel();
+}
+
+function disposeSurfaceAxis(a) {
+  scene.remove(a.arrow);
+  scene.remove(a.ring);
+  if (a.arrow.line) { a.arrow.line.geometry.dispose(); a.arrow.line.material.dispose(); }
+  if (a.arrow.cone) { a.arrow.cone.geometry.dispose(); a.arrow.cone.material.dispose(); }
+  a.ring.geometry.dispose();
+  a.ring.material.dispose();
 }
 
 window.delSurfaceAxis = (id) => {
   const idx = surfaceAxes.findIndex(a => a.id === id);
   if (idx === -1) return;
-  const a = surfaceAxes[idx];
-  scene.remove(a.arrow);
-  scene.remove(a.ring);
-  a.arrow.dispose();
-  a.ring.geometry.dispose();
-  a.ring.material.dispose();
+  disposeSurfaceAxis(surfaceAxes[idx]);
   surfaceAxes.splice(idx, 1);
   renderAxes();
 };
 
 window.clearSurfaceAxes = () => {
-  surfaceAxes.forEach(a => {
-    scene.remove(a.arrow);
-    scene.remove(a.ring);
-    a.arrow.dispose();
-    a.ring.geometry.dispose();
-    a.ring.material.dispose();
-  });
+  surfaceAxes.forEach(disposeSurfaceAxis);
   surfaceAxes = [];
   renderAxes();
 };
 
+function showAxisPanel() {
+  if (surfaceAxes.length || axisMode) {
+    document.getElementById('axis-panel').style.display = 'block';
+  } else {
+    document.getElementById('axis-panel').style.display = 'none';
+  }
+}
+
 window.toggleAxisMode = () => {
   axisMode = !axisMode;
   document.getElementById('btn-axis').classList.toggle('active', axisMode);
-  document.getElementById('axis-panel').style.display = axisMode ? 'block' : 'none';
   document.getElementById('canvas').style.cursor = axisMode ? 'crosshair' : 'default';
 
   if (axisMode) {
@@ -3861,19 +3872,11 @@ window.toggleAxisMode = () => {
     if (minDistMode) toggleMinDist();
     if (paintMode) togglePaint();
     document.getElementById('axis-hint').textContent = 'Click a surface to place a perpendicular axis.';
+  } else {
+    document.getElementById('axis-hint').textContent = '';
   }
 
-  surfaceAxes.forEach(a => {
-    const opacity = axisMode ? 1.0 : 0.4;
-    a.arrow.line.material.transparent = true;
-    a.arrow.line.material.opacity = opacity;
-    a.arrow.line.material.needsUpdate = true;
-    a.arrow.cone.material.transparent = true;
-    a.arrow.cone.material.opacity = opacity;
-    a.arrow.cone.material.needsUpdate = true;
-    a.ring.material.opacity = axisMode ? 0.5 : 0.2;
-    a.ring.material.needsUpdate = true;
-  });
+  showAxisPanel();
 };
 
 window.toggleMeasure = () => {
