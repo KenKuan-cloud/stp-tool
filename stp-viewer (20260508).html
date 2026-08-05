@@ -3102,32 +3102,86 @@ function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
     }
   }
 
-  // Find PRODUCT entities and match to hidden/visible names
+  // Find PRODUCT entities and match to hidden/visible names.
+  // STEP format: PRODUCT('identifier', 'name', 'description', (context))
+  // occt-import-js may use the name (2nd string) or identifier (1st string),
+  // so we check ALL quoted strings in each PRODUCT entity.
   const hiddenProductIds  = new Set();
   const visibleProductIds = new Set();
 
   const hiddenNorm  = new Set([...hiddenNames].map(n => n.trim().toLowerCase()));
   const visibleNorm = new Set([...visibleNames].map(n => n.trim().toLowerCase()));
-  const normToOrigHidden  = new Map([...hiddenNames].map(n => [n.trim().toLowerCase(), n]));
-  const normToOrigVisible = new Map([...visibleNames].map(n => [n.trim().toLowerCase(), n]));
 
+  // Collect all PRODUCT entities (including inside complex entities)
+  const productEntities = [];
   for (const [id, ent] of entities) {
-    if (ent.type === 'PRODUCT') {
-      const nameMatch = ent.args.match(/'([^']*)'/);
-      if (nameMatch) {
-        const rawName = nameMatch[1];
-        const norm = rawName.trim().toLowerCase();
-        if (hiddenNorm.has(norm))       hiddenProductIds.add(id);
-        else if (visibleNorm.has(norm)) visibleProductIds.add(id);
+    if (ent.type === 'PRODUCT' || ent.type.split('+').includes('PRODUCT')) {
+      productEntities.push([id, ent]);
+    }
+  }
+
+  // Sort by entity ID for positional fallback
+  productEntities.sort((a, b) => a[0] - b[0]);
+
+  console.log('STEP filter: PRODUCT entities found:', productEntities.length);
+  console.log('STEP filter: hidden names:', [...hiddenNames]);
+  console.log('STEP filter: visible names:', [...visibleNames]);
+
+  for (const [id, ent] of productEntities) {
+    const allStrings = [...ent.args.matchAll(/'([^']*)'/g)].map(m => m[1].trim().toLowerCase());
+    console.log(`  PRODUCT #${id} strings:`, allStrings);
+    let matched = false;
+    for (const s of allStrings) {
+      if (hiddenNorm.has(s))  { hiddenProductIds.add(id); matched = true; break; }
+      if (visibleNorm.has(s)) { visibleProductIds.add(id); matched = true; break; }
+    }
+    if (!matched) {
+      // Unmatched PRODUCT — try substring match (some names include extra suffixes)
+      for (const s of allStrings) {
+        if (!s) continue;
+        for (const h of hiddenNorm)  { if (s.includes(h) || h.includes(s)) { hiddenProductIds.add(id); matched = true; break; } }
+        if (matched) break;
+        for (const v of visibleNorm) { if (s.includes(v) || v.includes(s)) { visibleProductIds.add(id); matched = true; break; } }
+        if (matched) break;
+      }
+    }
+  }
+
+  // Positional fallback: if name-based matching found no hidden products,
+  // but we have synthetic names like "Part N", map by order.
+  if (hiddenProductIds.size === 0 && productEntities.length > 0) {
+    const hasSyntheticNames = [...hiddenNames].some(n => /^Part \d+$/.test(n)) ||
+                              [...visibleNames].some(n => /^Part \d+$/.test(n));
+    if (hasSyntheticNames) {
+      console.log('STEP filter: name matching failed, falling back to positional mapping');
+      // Build a map of all original part names (including deleted) in load order
+      const allOrigNames = [...visibleNames, ...hiddenNames];
+      // Map synthetic "Part N" names to 1-based indices
+      for (const name of hiddenNames) {
+        const m = name.match(/^Part (\d+)$/);
+        if (m) {
+          const partIdx = parseInt(m[1]) - 1; // 0-based
+          if (partIdx < productEntities.length) {
+            hiddenProductIds.add(productEntities[partIdx][0]);
+          }
+        }
+      }
+      for (const name of visibleNames) {
+        const m = name.match(/^Part (\d+)$/);
+        if (m) {
+          const partIdx = parseInt(m[1]) - 1;
+          if (partIdx < productEntities.length) {
+            visibleProductIds.add(productEntities[partIdx][0]);
+          }
+        }
       }
     }
   }
 
   console.log(`STEP filter: ${hiddenProductIds.size} hidden products, ${visibleProductIds.size} visible products out of ${entities.size} entities`);
 
-  // If we can't identify any products, fall back to original
   if (hiddenProductIds.size === 0) {
-    console.warn('Could not match any hidden part names to STEP PRODUCT entities. Saving original.');
+    console.warn('Could not match any hidden/deleted part names to STEP PRODUCT entities. Saving original.');
     return stepText;
   }
 
@@ -3151,10 +3205,8 @@ function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
         if (visited.has(depId)) continue;
         const depEnt = entities.get(depId);
         if (!depEnt) continue;
-        // Only follow product-structure types in reverse
-        const followTypes = [
+        const followPrefixes = [
           'PRODUCT_DEFINITION_FORMATION',
-          'PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE',
           'PRODUCT_DEFINITION',
           'PRODUCT_DEFINITION_SHAPE',
           'SHAPE_DEFINITION_REPRESENTATION',
@@ -3164,11 +3216,11 @@ function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
           'NEXT_ASSEMBLY_USAGE_OCCURRENCE',
           'CONTEXT_DEPENDENT_SHAPE_REPRESENTATION',
           'REPRESENTATION_RELATIONSHIP',
-          'REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION',
           'ITEM_DEFINED_TRANSFORMATION',
           'SHAPE_REPRESENTATION_RELATIONSHIP',
         ];
-        if (followTypes.includes(depEnt.type)) {
+        const dtype = depEnt.type.split('+')[0];
+        if (followPrefixes.some(p => dtype.startsWith(p))) {
           visited.add(depId);
           queue.push(depId);
         }
@@ -3178,7 +3230,7 @@ function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
     // Phase 2: Forward BFS from SHAPE_DEFINITION_REPRESENTATION to collect geometry
     const sdrIds = [...collected].filter(id => {
       const e = entities.get(id);
-      return e && e.type === 'SHAPE_DEFINITION_REPRESENTATION';
+      return e && (e.type === 'SHAPE_DEFINITION_REPRESENTATION' || e.type.includes('SHAPE_DEFINITION_REPRESENTATION'));
     });
 
     // From each SDR, find the SHAPE_REPRESENTATION it references
