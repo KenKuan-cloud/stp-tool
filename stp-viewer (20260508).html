@@ -343,6 +343,10 @@ body.group-on .group-row .gedit{display:flex}
     <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>Clear
   </button>
   <div class="tb-sep"></div>
+  <button class="btn" id="btn-axis" onclick="toggleAxisMode()" title="Place perpendicular axis on a surface">
+    <svg viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="22" stroke-width="2"/><polyline points="8 6 12 2 16 6"/><ellipse cx="12" cy="18" rx="6" ry="2" fill="none" stroke-width="1.5"/></svg>Axis
+  </button>
+  <div class="tb-sep"></div>
   <button class="btn" id="btn-paint" onclick="togglePaint()" title="Paint / highlight a surface">
     <svg viewBox="0 0 24 24"><path d="M19 11H5a2 2 0 00-2 2v2a2 2 0 002 2h14a2 2 0 002-2v-2a2 2 0 00-2-2z"/><path d="M17 11V5a2 2 0 00-2-2H9a2 2 0 00-2 2v6"/><path d="M12 17v4"/></svg>Paint
   </button>
@@ -494,6 +498,15 @@ body.group-on .group-row .gedit{display:flex}
       <div id="m-total" style="font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:11px;color:var(--text-dim);margin-top:4px"></div>
     </div>
 
+    <div class="rsec" id="axis-panel" style="display:none">
+      <div class="rsec-title">Surface Axes</div>
+      <div id="axis-hint" style="font-size:10.5px;color:var(--text-dim);margin-bottom:6px;line-height:1.4">Click a surface to place a perpendicular axis.</div>
+      <div id="axis-list" style="margin-top:4px"></div>
+      <div style="margin-top:6px">
+        <button class="btn" onclick="clearSurfaceAxes()" style="width:100%;justify-content:center">Clear All Axes</button>
+      </div>
+    </div>
+
     <div class="rsec" id="section-panel" style="display:none">
       <div class="rsec-title">Section Cut</div>
       <div style="display:flex;gap:4px;margin-bottom:8px">
@@ -555,6 +568,9 @@ let ghostMode = false;
 let edgeMode = true;   // show edges by default — helps surface/shell models
 let measureMode = false;
 let minDistMode = false;
+let axisMode = false;
+let surfaceAxes = [];
+let axisIdSeq = 0;
 let minDistPending = [];  // array of part indices (max 2)
 
 // ── GROUPS ─────────────────────────────────────
@@ -742,10 +758,10 @@ function onMove(e) {
     const p = hit.point;
     bar.style.display = 'block';
     bar.textContent = `X ${p.x.toFixed(3)}  Y ${p.y.toFixed(3)}  Z ${p.z.toFixed(3)}`;
-    document.getElementById('canvas').style.cursor = measureMode ? 'crosshair' : 'pointer';
+    document.getElementById('canvas').style.cursor = (measureMode || axisMode) ? 'crosshair' : 'pointer';
   } else {
     bar.style.display = 'none';
-    document.getElementById('canvas').style.cursor = measureMode ? 'crosshair' : 'default';
+    document.getElementById('canvas').style.cursor = (measureMode || axisMode) ? 'crosshair' : 'default';
   }
 }
 
@@ -1067,10 +1083,10 @@ window.togglePaint = () => {
   document.getElementById('paint-swatches').style.display   = paintMode ? 'flex' : 'none';
   document.getElementById('btn-paint-clear').style.display  = paintMode ? 'inline-flex' : 'none';
   document.getElementById('canvas').style.cursor = paintMode ? 'crosshair' : 'default';
-  // Turn off conflicting modes
   if (paintMode) {
     if (typeof measureMode !== 'undefined' && measureMode) toggleMeasure();
     if (typeof minDistMode  !== 'undefined' && minDistMode)  toggleMinDist();
+    if (typeof axisMode !== 'undefined' && axisMode) toggleAxisMode();
   }
 };
 
@@ -1138,6 +1154,15 @@ function onPointerUp(e) {
       handleSectionFacePick(hit);
     } else {
       document.getElementById('sec-face-hint').textContent = 'No face hit — click ON the model.';
+    }
+    return;
+  }
+
+  if (axisMode) {
+    if (hit && hit.face) {
+      handleAxisClick(hit);
+    } else {
+      document.getElementById('axis-hint').textContent = 'No face hit — click ON the model.';
     }
     return;
   }
@@ -3723,12 +3748,12 @@ function addClashMeasurement(idxA, idxB, clash) {
 
 window.toggleMinDist = () => {
   minDistMode = !minDistMode;
-  // Deactivate measure mode if enabling min-dist
   if (minDistMode && measureMode) {
     measureMode = false;
     cleanupPendingMeasure();
     document.getElementById('btn-measure').classList.remove('active');
   }
+  if (minDistMode && axisMode) toggleAxisMode();
   clearMinDistPending();
   document.getElementById('btn-mindist').classList.toggle('active', minDistMode);
   document.getElementById('m-hint').textContent = minDistMode
@@ -3737,14 +3762,128 @@ window.toggleMinDist = () => {
   document.getElementById('canvas').style.cursor = minDistMode ? 'crosshair' : 'default';
 };
 
+// ═══════════════════════════════════════
+//  SURFACE AXIS MARKERS
+// ═══════════════════════════════════════
+
+function getAxisArrowLength() {
+  let base = 2;
+  if (modelBBox) {
+    const sz = modelBBox.getSize(new THREE.Vector3());
+    base = Math.max(sz.x, sz.y, sz.z) * 0.08;
+  }
+  return base;
+}
+
+function handleAxisClick(hit) {
+  const nMat = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
+  const worldNormal = hit.face.normal.clone().applyMatrix3(nMat).normalize();
+  const point = hit.point.clone();
+
+  const len = getAxisArrowLength();
+  const headLen = len * 0.2;
+  const headW = len * 0.08;
+
+  const arrow = new THREE.ArrowHelper(worldNormal, point, len, 0x00ffcc, headLen, headW);
+  scene.add(arrow);
+
+  const ringRadius = len * 0.15;
+  const ringGeo = new THREE.RingGeometry(ringRadius * 0.85, ringRadius, 32);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.position.copy(point);
+  ring.lookAt(point.clone().add(worldNormal));
+  scene.add(ring);
+
+  const id = ++axisIdSeq;
+  const rad = Math.PI / 180;
+  const angX = worldNormal.angleTo(new THREE.Vector3(1, 0, 0)) / rad;
+  const angY = worldNormal.angleTo(new THREE.Vector3(0, 1, 0)) / rad;
+  const angZ = worldNormal.angleTo(new THREE.Vector3(0, 0, 1)) / rad;
+
+  surfaceAxes.push({ id, point, normal: worldNormal, arrow, ring, angX, angY, angZ });
+  renderAxes();
+  document.getElementById('axis-hint').textContent = 'Click another surface, or toggle off.';
+}
+
+function renderAxes() {
+  const list = document.getElementById('axis-list');
+  list.innerHTML = surfaceAxes.map(a => `
+    <div class="m-item" style="flex-direction:column;align-items:stretch;gap:3px;margin-bottom:4px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="m-tag">A${a.id}</div>
+        <button class="m-del" onclick="delSurfaceAxis(${a.id})" title="Delete">✕</button>
+      </div>
+      <div style="font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:9.5px;color:var(--text-dim);line-height:1.5">
+        N (${a.normal.x.toFixed(3)}, ${a.normal.y.toFixed(3)}, ${a.normal.z.toFixed(3)})
+      </div>
+      <div style="display:flex;gap:6px;font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:9.5px">
+        <span style="color:#ff5555">∠X ${a.angX.toFixed(1)}°</span>
+        <span style="color:#55ff55">∠Y ${a.angY.toFixed(1)}°</span>
+        <span style="color:#5599ff">∠Z ${a.angZ.toFixed(1)}°</span>
+      </div>
+    </div>`).join('');
+}
+
+window.delSurfaceAxis = (id) => {
+  const idx = surfaceAxes.findIndex(a => a.id === id);
+  if (idx === -1) return;
+  const a = surfaceAxes[idx];
+  scene.remove(a.arrow);
+  scene.remove(a.ring);
+  a.arrow.dispose();
+  a.ring.geometry.dispose();
+  a.ring.material.dispose();
+  surfaceAxes.splice(idx, 1);
+  renderAxes();
+};
+
+window.clearSurfaceAxes = () => {
+  surfaceAxes.forEach(a => {
+    scene.remove(a.arrow);
+    scene.remove(a.ring);
+    a.arrow.dispose();
+    a.ring.geometry.dispose();
+    a.ring.material.dispose();
+  });
+  surfaceAxes = [];
+  renderAxes();
+};
+
+window.toggleAxisMode = () => {
+  axisMode = !axisMode;
+  document.getElementById('btn-axis').classList.toggle('active', axisMode);
+  document.getElementById('axis-panel').style.display = axisMode ? 'block' : 'none';
+  document.getElementById('canvas').style.cursor = axisMode ? 'crosshair' : 'default';
+
+  if (axisMode) {
+    if (measureMode) toggleMeasure();
+    if (minDistMode) toggleMinDist();
+    if (paintMode) togglePaint();
+    document.getElementById('axis-hint').textContent = 'Click a surface to place a perpendicular axis.';
+  }
+
+  surfaceAxes.forEach(a => {
+    const opacity = axisMode ? 1.0 : 0.4;
+    a.arrow.line.material.transparent = true;
+    a.arrow.line.material.opacity = opacity;
+    a.arrow.line.material.needsUpdate = true;
+    a.arrow.cone.material.transparent = true;
+    a.arrow.cone.material.opacity = opacity;
+    a.arrow.cone.material.needsUpdate = true;
+    a.ring.material.opacity = axisMode ? 0.5 : 0.2;
+    a.ring.material.needsUpdate = true;
+  });
+};
+
 window.toggleMeasure = () => {
   measureMode = !measureMode;
-  // Deactivate min-dist mode if enabling measure
   if (measureMode && minDistMode) {
     minDistMode = false;
     clearMinDistPending();
     document.getElementById('btn-mindist').classList.remove('active');
   }
+  if (measureMode && axisMode) toggleAxisMode();
   cleanupPendingMeasure();
   document.getElementById('btn-measure').classList.toggle('active', measureMode);
   document.getElementById('m-hint').textContent = measureMode
