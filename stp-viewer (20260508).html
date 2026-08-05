@@ -2818,7 +2818,28 @@ function removeSectionHelper() {
 //  EXPORT FUNCTIONS
 // ═══════════════════════════════════════
 
-function downloadBlob(blob, filename) {
+async function downloadBlob(blob, filename) {
+  if (window.showSaveFilePicker) {
+    const ext = filename.substring(filename.lastIndexOf('.'));
+    const mimeMap = { '.stp': 'text/plain', '.step': 'text/plain', '.stl': 'application/octet-stream' };
+    const descMap = { '.stp': 'STEP files', '.step': 'STEP files', '.stl': 'STL files' };
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{
+          description: descMap[ext.toLowerCase()] || 'All files',
+          accept: { [mimeMap[ext.toLowerCase()] || 'application/octet-stream']: [ext] }
+        }]
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      console.warn('showSaveFilePicker failed, falling back:', e);
+    }
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
@@ -2828,7 +2849,7 @@ function downloadBlob(blob, filename) {
 }
 
 // ── Export visible parts as binary STL ──
-window.exportSTL = () => {
+window.exportSTL = async () => {
   const vis = parts.filter(p => p.visible);
   if (!vis.length) { alert('No visible parts to export.'); return; }
 
@@ -2874,11 +2895,11 @@ window.exportSTL = () => {
     }
   });
 
-  downloadBlob(new Blob([buf], {type:'application/octet-stream'}), originalFileName + '_visible.stl');
+  await downloadBlob(new Blob([buf], {type:'application/octet-stream'}), originalFileName + '_visible.stl');
 };
 
 // ── Export filtered STEP (remove hidden parts) ──
-window.exportFilteredSTEP = () => {
+window.exportFilteredSTEP = async () => {
   if (!originalStepText) { alert('No STEP file loaded.'); return; }
   if (!parts.length) { alert('No parts loaded.'); return; }
 
@@ -2907,7 +2928,7 @@ window.exportFilteredSTEP = () => {
 
   // Nothing fully-hidden → save original as-is
   if (!hiddenNames.size) {
-    downloadBlob(new Blob([originalStepText], {type:'text/plain'}), originalFileName + '.stp');
+    await downloadBlob(new Blob([originalStepText], {type:'text/plain'}), originalFileName + '.stp');
     return;
   }
 
@@ -2915,7 +2936,7 @@ window.exportFilteredSTEP = () => {
 
   try {
     const filtered = filterStepByVisibility(originalStepText, hiddenNames, visibleNames);
-    downloadBlob(new Blob([filtered], {type:'text/plain'}), originalFileName + '_visible.stp');
+    await downloadBlob(new Blob([filtered], {type:'text/plain'}), originalFileName + '_visible.stp');
   } catch (err) {
     console.error('STEP filter error:', err);
     alert('STEP filtering failed: ' + err.message + '\n\nFalling back to STL export.');
