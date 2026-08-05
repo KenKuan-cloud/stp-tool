@@ -3131,18 +3131,13 @@ function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
     const allStrings = [...ent.args.matchAll(/'([^']*)'/g)].map(m => m[1].trim().toLowerCase());
     console.log(`  PRODUCT #${id} strings:`, allStrings);
     let matched = false;
+    // Check visible FIRST so a product is never wrongly classified as hidden
     for (const s of allStrings) {
-      if (hiddenNorm.has(s))  { hiddenProductIds.add(id); matched = true; break; }
       if (visibleNorm.has(s)) { visibleProductIds.add(id); matched = true; break; }
     }
     if (!matched) {
-      // Unmatched PRODUCT — try substring match (some names include extra suffixes)
       for (const s of allStrings) {
-        if (!s) continue;
-        for (const h of hiddenNorm)  { if (s.includes(h) || h.includes(s)) { hiddenProductIds.add(id); matched = true; break; } }
-        if (matched) break;
-        for (const v of visibleNorm) { if (s.includes(v) || v.includes(s)) { visibleProductIds.add(id); matched = true; break; } }
-        if (matched) break;
+        if (hiddenNorm.has(s)) { hiddenProductIds.add(id); matched = true; break; }
       }
     }
   }
@@ -3175,6 +3170,14 @@ function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
           }
         }
       }
+    }
+  }
+
+  // Any unmatched PRODUCT defaults to visible (safe — keeps its geometry)
+  for (const [id] of productEntities) {
+    if (!hiddenProductIds.has(id) && !visibleProductIds.has(id)) {
+      visibleProductIds.add(id);
+      console.log(`  PRODUCT #${id} unmatched — treating as visible (safe default)`);
     }
   }
 
@@ -3289,6 +3292,23 @@ function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
 
   // Also always remove the hidden PRODUCT entities themselves
   for (const id of hiddenProductIds) toRemove.add(id);
+
+  // Reference integrity: iteratively un-remove any entity still
+  // referenced by a kept entity. This prevents dangling #ID refs
+  // that would make the file unparseable.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [id, ent] of entities) {
+      if (toRemove.has(id)) continue;
+      for (const ref of ent.refs) {
+        if (toRemove.has(ref)) {
+          toRemove.delete(ref);
+          changed = true;
+        }
+      }
+    }
+  }
 
   console.log(`STEP filter: removing ${toRemove.size} entities of ${entities.size} total`);
 
