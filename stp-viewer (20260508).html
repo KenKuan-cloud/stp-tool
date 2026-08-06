@@ -3043,22 +3043,21 @@ window.exportFilteredSTEP = async () => {
 };
 
 function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
-  // Split into HEADER and DATA sections
   const dataStart = stepText.indexOf('DATA;');
   const dataEnd   = stepText.indexOf('ENDSEC;', dataStart);
   if (dataStart < 0 || dataEnd < 0) throw new Error('Cannot parse STEP structure.');
 
-  const before = stepText.substring(0, dataStart + 5); // up to and including DATA;
-  const after  = stepText.substring(dataEnd);           // ENDSEC; ... END-ISO-10303-21;
+  const before = stepText.substring(0, dataStart + 5);
+  const after  = stepText.substring(dataEnd);
   const dataBlock = stepText.substring(dataStart + 5, dataEnd);
 
-  // Normalize: join multi-line entity definitions into single lines
+  // Join multi-line entity definitions into single lines
   const rawLines = dataBlock.split(/\r?\n/);
   const entityLines = [];
   let accumulator = '';
   for (const line of rawLines) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed === '') continue;
+    if (!trimmed) continue;
     accumulator += (accumulator ? ' ' : '') + trimmed;
     if (accumulator.endsWith(';')) {
       entityLines.push(accumulator);
@@ -3067,33 +3066,24 @@ function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
   }
   if (accumulator.trim()) entityLines.push(accumulator.trim());
 
-  // Parse each entity: #ID = TYPE(args); or #ID = (COMPLEX_TYPE(args)...);
-  const entities = new Map(); // id → {id, type, args, fullLine, refs}
+  // Parse entities into a map
+  const entities = new Map();
   for (const line of entityLines) {
-    // Match simple: #10 = PRODUCT('name', ...);
     let m = line.match(/^#(\d+)\s*=\s*([\w]+)\s*\(([\s\S]*)\)\s*;$/);
     if (m) {
       const id = parseInt(m[1]);
-      const type = m[2].toUpperCase();
-      const args = m[3];
-      const refs = [...args.matchAll(/#(\d+)/g)].map(r => parseInt(r[1]));
-      entities.set(id, { id, type, args, fullLine: line, refs });
+      entities.set(id, { id, type: m[2].toUpperCase(), args: m[3], line, refs: [...m[3].matchAll(/#(\d+)/g)].map(r => parseInt(r[1])) });
       continue;
     }
-    // Match complex: #50 = ( TYPE1(...) TYPE2(...) );
     m = line.match(/^#(\d+)\s*=\s*\(\s*([\s\S]*)\)\s*;$/);
     if (m) {
       const id = parseInt(m[1]);
-      const body = m[2];
-      // Extract all type names from the complex entity
-      const types = [...body.matchAll(/([\w]+)\s*\(/g)].map(r => r[1].toUpperCase());
-      const type = types.join('+'); // Combined type string for matching
-      const refs = [...body.matchAll(/#(\d+)/g)].map(r => parseInt(r[1]));
-      entities.set(id, { id, type, args: body, fullLine: line, refs });
+      const types = [...m[2].matchAll(/([\w]+)\s*\(/g)].map(r => r[1].toUpperCase());
+      entities.set(id, { id, type: types.join('+'), args: m[2], line, refs: [...m[2].matchAll(/#(\d+)/g)].map(r => parseInt(r[1])) });
     }
   }
 
-  // Build reverse reference map: id → set of ids that reference it
+  // Reverse reference map
   const reverseRefs = new Map();
   for (const [id, ent] of entities) {
     for (const ref of ent.refs) {
@@ -3102,200 +3092,83 @@ function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
     }
   }
 
-  // Find PRODUCT entities and match to hidden/visible names.
-  // STEP format: PRODUCT('identifier', 'name', 'description', (context))
-  // occt-import-js may use the name (2nd string) or identifier (1st string),
-  // so we check ALL quoted strings in each PRODUCT entity.
-  const hiddenProductIds  = new Set();
-  const visibleProductIds = new Set();
-
+  // Find PRODUCT entities
   const hiddenNorm  = new Set([...hiddenNames].map(n => n.trim().toLowerCase()));
   const visibleNorm = new Set([...visibleNames].map(n => n.trim().toLowerCase()));
+  const hiddenProductIds = new Set();
 
-  // Collect all PRODUCT entities (including inside complex entities)
-  const productEntities = [];
   for (const [id, ent] of entities) {
-    if (ent.type === 'PRODUCT' || ent.type.split('+').includes('PRODUCT')) {
-      productEntities.push([id, ent]);
-    }
+    const isProduct = ent.type === 'PRODUCT' || ent.type.split('+').includes('PRODUCT');
+    if (!isProduct) continue;
+    const strings = [...ent.args.matchAll(/'([^']*)'/g)].map(m => m[1].trim().toLowerCase());
+    console.log(`  PRODUCT #${id}:`, strings);
+    // Only mark as hidden if it matches a hidden name AND does NOT match any visible name
+    let isVisible = strings.some(s => visibleNorm.has(s));
+    let isHidden  = strings.some(s => hiddenNorm.has(s));
+    if (isHidden && !isVisible) hiddenProductIds.add(id);
   }
 
-  // Sort by entity ID for positional fallback
-  productEntities.sort((a, b) => a[0] - b[0]);
-
-  console.log('STEP filter: PRODUCT entities found:', productEntities.length);
   console.log('STEP filter: hidden names:', [...hiddenNames]);
   console.log('STEP filter: visible names:', [...visibleNames]);
-
-  for (const [id, ent] of productEntities) {
-    const allStrings = [...ent.args.matchAll(/'([^']*)'/g)].map(m => m[1].trim().toLowerCase());
-    console.log(`  PRODUCT #${id} strings:`, allStrings);
-    let matched = false;
-    // Check visible FIRST so a product is never wrongly classified as hidden
-    for (const s of allStrings) {
-      if (visibleNorm.has(s)) { visibleProductIds.add(id); matched = true; break; }
-    }
-    if (!matched) {
-      for (const s of allStrings) {
-        if (hiddenNorm.has(s)) { hiddenProductIds.add(id); matched = true; break; }
-      }
-    }
-  }
-
-  // Positional fallback: if name-based matching found no hidden products,
-  // but we have synthetic names like "Part N", map by order.
-  if (hiddenProductIds.size === 0 && productEntities.length > 0) {
-    const hasSyntheticNames = [...hiddenNames].some(n => /^Part \d+$/.test(n)) ||
-                              [...visibleNames].some(n => /^Part \d+$/.test(n));
-    if (hasSyntheticNames) {
-      console.log('STEP filter: name matching failed, falling back to positional mapping');
-      // Build a map of all original part names (including deleted) in load order
-      const allOrigNames = [...visibleNames, ...hiddenNames];
-      // Map synthetic "Part N" names to 1-based indices
-      for (const name of hiddenNames) {
-        const m = name.match(/^Part (\d+)$/);
-        if (m) {
-          const partIdx = parseInt(m[1]) - 1; // 0-based
-          if (partIdx < productEntities.length) {
-            hiddenProductIds.add(productEntities[partIdx][0]);
-          }
-        }
-      }
-      for (const name of visibleNames) {
-        const m = name.match(/^Part (\d+)$/);
-        if (m) {
-          const partIdx = parseInt(m[1]) - 1;
-          if (partIdx < productEntities.length) {
-            visibleProductIds.add(productEntities[partIdx][0]);
-          }
-        }
-      }
-    }
-  }
-
-  // Any unmatched PRODUCT defaults to visible (safe — keeps its geometry)
-  for (const [id] of productEntities) {
-    if (!hiddenProductIds.has(id) && !visibleProductIds.has(id)) {
-      visibleProductIds.add(id);
-      console.log(`  PRODUCT #${id} unmatched — treating as visible (safe default)`);
-    }
-  }
-
-  console.log(`STEP filter: ${hiddenProductIds.size} hidden products, ${visibleProductIds.size} visible products out of ${entities.size} entities`);
+  console.log('STEP filter: matched hidden PRODUCT IDs:', [...hiddenProductIds]);
 
   if (hiddenProductIds.size === 0) {
-    console.warn('Could not match any hidden/deleted part names to STEP PRODUCT entities. Saving original.');
+    console.warn('No PRODUCT entities matched hidden/deleted names. Saving original.');
     return stepText;
   }
 
-  // Collect entity IDs reachable from a set of product IDs
-  // Uses reverse BFS (entities that DEPEND on these products)
-  // then forward BFS from SHAPE_DEFINITION_REPRESENTATION to collect geometry
-  function collectProductEntities(productIds) {
-    const collected = new Set();
-    const queue = [...productIds];
-    const visited = new Set(queue);
+  // SAFE STRATEGY: only remove product-structure entities, NEVER geometry.
+  // This removes the hidden product's entry from the assembly tree but
+  // leaves geometry as harmless orphans. The file stays valid and openable.
+  const safeRemoveTypes = new Set([
+    'PRODUCT',
+    'PRODUCT_DEFINITION_FORMATION',
+    'PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE',
+    'PRODUCT_DEFINITION',
+    'PRODUCT_DEFINITION_SHAPE',
+    'PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS',
+    'SHAPE_DEFINITION_REPRESENTATION',
+    'NEXT_ASSEMBLY_USAGE_OCCURRENCE',
+    'CONTEXT_DEPENDENT_SHAPE_REPRESENTATION',
+    'PRODUCT_RELATED_PRODUCT_CATEGORY',
+  ]);
 
-    // Phase 1: Reverse BFS — find entities that reference these products
-    // (PRODUCT_DEFINITION_FORMATION → PRODUCT_DEFINITION → PRODUCT_DEFINITION_SHAPE
-    //  → SHAPE_DEFINITION_REPRESENTATION → NEXT_ASSEMBLY_USAGE_OCCURRENCE etc.)
-    while (queue.length) {
-      const cur = queue.shift();
-      collected.add(cur);
-      const deps = reverseRefs.get(cur);
-      if (!deps) continue;
-      for (const depId of deps) {
-        if (visited.has(depId)) continue;
-        const depEnt = entities.get(depId);
-        if (!depEnt) continue;
-        const followPrefixes = [
-          'PRODUCT_DEFINITION_FORMATION',
-          'PRODUCT_DEFINITION',
-          'PRODUCT_DEFINITION_SHAPE',
-          'SHAPE_DEFINITION_REPRESENTATION',
-          'PRODUCT_DEFINITION_CONTEXT',
-          'PRODUCT_RELATED_PRODUCT_CATEGORY',
-          'PRODUCT_CATEGORY',
-          'NEXT_ASSEMBLY_USAGE_OCCURRENCE',
-          'CONTEXT_DEPENDENT_SHAPE_REPRESENTATION',
-          'REPRESENTATION_RELATIONSHIP',
-          'ITEM_DEFINED_TRANSFORMATION',
-          'SHAPE_REPRESENTATION_RELATIONSHIP',
-        ];
-        const dtype = depEnt.type.split('+')[0];
-        if (followPrefixes.some(p => dtype.startsWith(p))) {
-          visited.add(depId);
-          queue.push(depId);
-        }
-      }
+  function isSafeType(type) {
+    if (safeRemoveTypes.has(type)) return true;
+    // Handle complex entity types like "A+B+C"
+    for (const t of type.split('+')) {
+      if (safeRemoveTypes.has(t)) return true;
     }
-
-    // Phase 2: Forward BFS from SHAPE_DEFINITION_REPRESENTATION to collect geometry
-    const sdrIds = [...collected].filter(id => {
-      const e = entities.get(id);
-      return e && (e.type === 'SHAPE_DEFINITION_REPRESENTATION' || e.type.includes('SHAPE_DEFINITION_REPRESENTATION'));
-    });
-
-    // From each SDR, find the SHAPE_REPRESENTATION it references
-    const shapeRepIds = new Set();
-    for (const sdrId of sdrIds) {
-      const sdr = entities.get(sdrId);
-      if (!sdr) continue;
-      for (const ref of sdr.refs) {
-        const refEnt = entities.get(ref);
-        if (refEnt && (refEnt.type.includes('SHAPE_REPRESENTATION') ||
-            refEnt.type.includes('BREP_SHAPE_REPRESENTATION') ||
-            refEnt.type.includes('GEOMETRICALLY_BOUNDED') ||
-            refEnt.type.includes('MANIFOLD_SURFACE'))) {
-          shapeRepIds.add(ref);
-        }
-      }
-    }
-
-    // Forward BFS from shape representations to collect all geometry
-    const geoQueue = [...shapeRepIds];
-    const geoVisited = new Set(geoQueue);
-    while (geoQueue.length) {
-      const cur = geoQueue.shift();
-      collected.add(cur);
-      const ent = entities.get(cur);
-      if (!ent) continue;
-      // Don't follow into shared context entities
-      if (ent.type.includes('REPRESENTATION_CONTEXT') ||
-          ent.type.includes('GLOBAL_UNCERTAINTY') ||
-          ent.type.includes('GLOBAL_UNIT') ||
-          ent.type.includes('GEOMETRIC_REPRESENTATION_CONTEXT') ||
-          ent.type.includes('APPLICATION_CONTEXT') ||
-          ent.type.includes('APPLICATION_PROTOCOL') ||
-          (ent.type.includes('_UNIT') && !ent.type.includes('VERTEX'))) continue;
-      for (const ref of ent.refs) {
-        if (!geoVisited.has(ref)) {
-          geoVisited.add(ref);
-          geoQueue.push(ref);
-        }
-      }
-    }
-
-    return collected;
+    return false;
   }
 
-  const hiddenEntities  = collectProductEntities(hiddenProductIds);
-  const visibleEntities = collectProductEntities(visibleProductIds);
-
-  // Only remove entities that belong EXCLUSIVELY to hidden products
+  // Collect only product-structure entities reachable from hidden products
   const toRemove = new Set();
-  for (const id of hiddenEntities) {
-    if (!visibleEntities.has(id)) {
-      toRemove.add(id);
+  const queue = [...hiddenProductIds];
+  const visited = new Set(queue);
+
+  // Reverse BFS: find entities that reference these products (upward in the tree)
+  while (queue.length) {
+    const cur = queue.shift();
+    const ent = entities.get(cur);
+    if (ent && isSafeType(ent.type)) {
+      toRemove.add(cur);
+    }
+    const deps = reverseRefs.get(cur);
+    if (!deps) continue;
+    for (const depId of deps) {
+      if (visited.has(depId)) continue;
+      const depEnt = entities.get(depId);
+      if (!depEnt) continue;
+      if (isSafeType(depEnt.type)) {
+        visited.add(depId);
+        queue.push(depId);
+      }
     }
   }
 
-  // Also always remove the hidden PRODUCT entities themselves
-  for (const id of hiddenProductIds) toRemove.add(id);
-
-  // Reference integrity: iteratively un-remove any entity still
-  // referenced by a kept entity. This prevents dangling #ID refs
-  // that would make the file unparseable.
+  // Safety: don't remove any entity that is referenced by a KEPT entity.
+  // This prevents breaking the file if we misidentify something.
   let changed = true;
   while (changed) {
     changed = false;
@@ -3310,9 +3183,26 @@ function filterStepByVisibility(stepText, hiddenNames, visibleNames) {
     }
   }
 
-  console.log(`STEP filter: removing ${toRemove.size} entities of ${entities.size} total`);
+  console.log(`STEP filter: safely removing ${toRemove.size} product-structure entities of ${entities.size} total (geometry untouched)`);
 
-  // Rebuild DATA section without removed entities
+  if (toRemove.size === 0) {
+    return stepText;
+  }
+
+  // Critical safety: verify that at least one complete product chain survives.
+  // Count SHAPE_DEFINITION_REPRESENTATION and PRODUCT entities that would remain.
+  let keptSDR = 0, keptProducts = 0;
+  for (const [id, ent] of entities) {
+    if (toRemove.has(id)) continue;
+    const t = ent.type;
+    if (t === 'SHAPE_DEFINITION_REPRESENTATION' || t.split('+').includes('SHAPE_DEFINITION_REPRESENTATION')) keptSDR++;
+    if (t === 'PRODUCT' || t.split('+').includes('PRODUCT')) keptProducts++;
+  }
+  if (keptSDR === 0 || keptProducts === 0) {
+    console.warn('STEP filter: removing these entities would leave no product chain. Saving original to prevent corruption.');
+    return stepText;
+  }
+
   const keptLines = entityLines.filter(line => {
     const m = line.match(/^#(\d+)/);
     if (!m) return true;
