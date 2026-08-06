@@ -3825,6 +3825,16 @@ function handleAxisClick(hit) {
   const arrow = new THREE.ArrowHelper(worldNormal, point, len, 0x00ffcc, headLen, headW);
   scene.add(arrow);
 
+  const refLen = len * 0.55;
+  const refHead = refLen * 0.18;
+  const refW = refLen * 0.06;
+  const xyzArrows = [
+    new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), point, refLen, 0xff4444, refHead, refW),
+    new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), point, refLen, 0x44ff44, refHead, refW),
+    new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), point, refLen, 0x4488ff, refHead, refW),
+  ];
+  xyzArrows.forEach(a => scene.add(a));
+
   const ringRadius = len * 0.15;
   const ringGeo = new THREE.RingGeometry(ringRadius * 0.85, ringRadius, 32);
   const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
@@ -3834,14 +3844,22 @@ function handleAxisClick(hit) {
   scene.add(ring);
 
   const id = ++axisIdSeq;
-  const rad = Math.PI / 180;
-  const angX = worldNormal.angleTo(new THREE.Vector3(1, 0, 0)) / rad;
-  const angY = worldNormal.angleTo(new THREE.Vector3(0, 1, 0)) / rad;
-  const angZ = worldNormal.angleTo(new THREE.Vector3(0, 0, 1)) / rad;
+  const deg = 180 / Math.PI;
+  const rawX = worldNormal.angleTo(new THREE.Vector3(1, 0, 0)) * deg;
+  const rawY = worldNormal.angleTo(new THREE.Vector3(0, 1, 0)) * deg;
+  const rawZ = worldNormal.angleTo(new THREE.Vector3(0, 0, 1)) * deg;
+  const angX = worldNormal.x >= 0 ? rawX : -rawX;
+  const angY = worldNormal.y >= 0 ? rawY : -rawY;
+  const angZ = worldNormal.z >= 0 ? rawZ : -rawZ;
 
-  surfaceAxes.push({ id, point, normal: worldNormal, arrow, ring, angX, angY, angZ });
+  surfaceAxes.push({ id, point, normal: worldNormal, arrow, ring, xyzArrows, angX, angY, angZ });
   renderAxes();
   document.getElementById('axis-hint').textContent = 'Click another surface, or toggle off.';
+}
+
+function fmtSignedAngle(v) {
+  const s = v >= 0 ? '+' : '';
+  return s + v.toFixed(1) + '°';
 }
 
 function renderAxes() {
@@ -3856,9 +3874,9 @@ function renderAxes() {
         N (${a.normal.x.toFixed(3)}, ${a.normal.y.toFixed(3)}, ${a.normal.z.toFixed(3)})
       </div>
       <div style="display:flex;gap:6px;font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:9.5px">
-        <span style="color:#ff5555">∠X ${a.angX.toFixed(1)}°</span>
-        <span style="color:#55ff55">∠Y ${a.angY.toFixed(1)}°</span>
-        <span style="color:#5599ff">∠Z ${a.angZ.toFixed(1)}°</span>
+        <span style="color:#ff5555">∠X ${fmtSignedAngle(a.angX)}</span>
+        <span style="color:#55ff55">∠Y ${fmtSignedAngle(a.angY)}</span>
+        <span style="color:#5599ff">∠Z ${fmtSignedAngle(a.angZ)}</span>
       </div>
     </div>`).join('');
   showAxisPanel();
@@ -3871,6 +3889,13 @@ function disposeSurfaceAxis(a) {
   if (a.arrow.cone) { a.arrow.cone.geometry.dispose(); a.arrow.cone.material.dispose(); }
   a.ring.geometry.dispose();
   a.ring.material.dispose();
+  if (a.xyzArrows) {
+    a.xyzArrows.forEach(ar => {
+      scene.remove(ar);
+      if (ar.line) { ar.line.geometry.dispose(); ar.line.material.dispose(); }
+      if (ar.cone) { ar.cone.geometry.dispose(); ar.cone.material.dispose(); }
+    });
+  }
 }
 
 window.delSurfaceAxis = (id) => {
