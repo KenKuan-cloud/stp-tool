@@ -3845,6 +3845,8 @@ function handleAxisClick(hit) {
 
   const id = ++axisIdSeq;
   const deg = 180 / Math.PI;
+
+  // 3D included angles between normal and each axis
   const rawX = worldNormal.angleTo(new THREE.Vector3(1, 0, 0)) * deg;
   const rawY = worldNormal.angleTo(new THREE.Vector3(0, 1, 0)) * deg;
   const rawZ = worldNormal.angleTo(new THREE.Vector3(0, 0, 1)) * deg;
@@ -3852,7 +3854,13 @@ function handleAxisClick(hit) {
   const angY = worldNormal.y >= 0 ? rawY : -rawY;
   const angZ = worldNormal.z >= 0 ? rawZ : -rawZ;
 
-  surfaceAxes.push({ id, point, normal: worldNormal, arrow, ring, xyzArrows, angX, angY, angZ });
+  // Projected angles onto each coordinate plane
+  const nx = worldNormal.x, ny = worldNormal.y, nz = worldNormal.z;
+  const projXY = Math.atan2(ny, nx) * deg;  // on XY plane, angle from X axis
+  const projXZ = Math.atan2(nz, nx) * deg;  // on XZ plane, angle from X axis
+  const projYZ = Math.atan2(nz, ny) * deg;  // on YZ plane, angle from Y axis
+
+  surfaceAxes.push({ id, point, normal: worldNormal, arrow, ring, xyzArrows, angX, angY, angZ, projXY, projXZ, projYZ });
   renderAxes();
   document.getElementById('axis-hint').textContent = 'Click another surface, or toggle off.';
 }
@@ -3873,10 +3881,19 @@ function renderAxes() {
       <div style="font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:9.5px;color:var(--text-dim);line-height:1.5">
         N (${a.normal.x.toFixed(3)}, ${a.normal.y.toFixed(3)}, ${a.normal.z.toFixed(3)})
       </div>
-      <div style="display:flex;gap:6px;font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:9.5px">
-        <span style="color:#ff5555">∠X ${fmtSignedAngle(a.angX)}</span>
-        <span style="color:#55ff55">∠Y ${fmtSignedAngle(a.angY)}</span>
-        <span style="color:#5599ff">∠Z ${fmtSignedAngle(a.angZ)}</span>
+      <div style="font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;font-size:9.5px;line-height:1.5">
+        <div style="color:var(--text-dim);font-size:8.5px;margin-bottom:1px">3D Included Angle</div>
+        <div style="display:flex;gap:6px">
+          <span style="color:#ff5555">∠X ${fmtSignedAngle(a.angX)}</span>
+          <span style="color:#55ff55">∠Y ${fmtSignedAngle(a.angY)}</span>
+          <span style="color:#5599ff">∠Z ${fmtSignedAngle(a.angZ)}</span>
+        </div>
+        <div style="color:var(--text-dim);font-size:8.5px;margin-top:3px;margin-bottom:1px">Projected Angle</div>
+        <div style="display:flex;gap:6px">
+          <span style="color:#cc88ff">XY ${fmtSignedAngle(a.projXY)}</span>
+          <span style="color:#ffaa44">XZ ${fmtSignedAngle(a.projXZ)}</span>
+          <span style="color:#44dddd">YZ ${fmtSignedAngle(a.projYZ)}</span>
+        </div>
       </div>
     </div>`).join('');
   showAxisPanel();
