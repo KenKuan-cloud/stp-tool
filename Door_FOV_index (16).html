@@ -1,0 +1,3829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wing Door Sensor FOV Tool — v1 (Phase 1)</title>
+<!-- =====================================================================
+  Wing Door Sensor FOV Analysis Tool
+  SRS WDS-FOV-SRS-001, Draft 0.1 — Phase 1 (Static FOV) implementation.
+  Single self-contained file: no dependencies, no build step, fully offline.
+  Section banners below mark the internal modules described in the plan.
+====================================================================== -->
+<style>
+/* ============================ 1. STYLES ============================ */
+:root{
+  --bg:#0f1216; --panel:#171c23; --panel2:#1f2630; --line:#2b3644;
+  --ink:#e6edf3; --muted:#93a1b0; --accent:#4da3ff;
+  --green:#39d353; --yellow:#e3b341; --red:#f85149; --orange:#ff9800;
+  --gray:#6e7681; --blue:#4da3ff; --purple:#a371f7;
+  /* canvas / scene colours (read from JS via cssVar) */
+  --canvas-bg:#0a0d11; --canvas-bg-top:#0a0d11; --canvas-bg-bot:#0a0d11;
+  --grid-minor:#161b22; --grid-major:#2b3644;
+  --axis:#30363d; --ground:#3a4757; --handle-fill:#0a0d11;
+  --on-accent:#04121f;
+  --overlay-strong:rgba(23,28,35,.9); --overlay-soft:rgba(23,28,35,.7);
+  /* door/wall geometry ink (RGB triple, alpha applied in JS via geo()) */
+  --geo-rgb:230,237,243;
+  /* 3D scene floor/grid/axes */
+  --scene-ground:rgba(60,80,110,.14); --scene-grid-minor:#1c2530;
+  --scene-grid-major:#33465c; --scene-axis:#5a6b7b; --scene-label:rgba(180,200,225,.55);
+}
+:root[data-theme="light"]{
+  --bg:#f5f7fa; --panel:#ffffff; --panel2:#eef2f7; --line:#d4dbe4;
+  --ink:#1b232c; --muted:#5a6673; --accent:#1f6feb;
+  --green:#1a7f37; --yellow:#9a6700; --red:#cf222e; --orange:#bc4c00;
+  --gray:#8b949e; --blue:#1f6feb; --purple:#8250df;
+  --canvas-bg:#ffffff; --canvas-bg-top:#c4d7ee; --canvas-bg-bot:#f4f8fc;
+  --grid-minor:#d5dce4; --grid-major:#a8b4c2;
+  --axis:#7a8798; --ground:#5c6b7c; --handle-fill:#ffffff;
+  --on-accent:#ffffff;
+  --overlay-strong:rgba(255,255,255,.9); --overlay-soft:rgba(255,255,255,.75);
+  --geo-rgb:44,54,68;
+  --scene-ground:rgba(120,140,170,.12); --scene-grid-minor:#c4ccd6;
+  --scene-grid-major:#98a6b6; --scene-axis:#6b7a8b; --scene-label:rgba(70,85,105,.8);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:13px/1.4 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+header{display:flex;align-items:center;gap:10px;padding:8px 14px;
+  background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;font-weight:600}
+header .spacer{flex:1}
+.hbar-sep{width:1px;align-self:stretch;background:var(--line);margin:2px 4px}
+button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+  border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:600}
+.layout{display:grid;grid-template-columns:340px 4px 1fr;height:calc(100vh - 47px)}
+.resize-handle{background:var(--line);cursor:col-resize;position:relative;z-index:2}
+.resize-handle:hover,.resize-handle.active{background:var(--accent)}
+.side{background:var(--panel);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;min-height:0}
+
+/* sidebar tabs — grouped */
+.tabs{display:flex;flex-wrap:wrap;gap:3px;padding:8px;border-bottom:1px solid var(--line);align-items:center}
+.tabs button{padding:5px 9px;font-size:11px}
+.tabs button.active{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.tabgroup-label{width:100%;font-size:9px;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);margin:6px 2px 1px}
+.tabgroup-label:first-child{margin-top:0}
+
+.panels{overflow-y:auto;padding:12px;flex:1;min-height:0}
+.panel{display:none}
+.panel.active{display:block}
+.panel h2{font-size:13px;margin:0 0 10px;color:var(--accent);
+  text-transform:uppercase;letter-spacing:.04em}
+.field{margin-bottom:9px}
+.field label{display:block;color:var(--muted);font-size:11px;margin-bottom:3px}
+.field input,.field select,.field textarea{width:100%;background:var(--panel2);
+  color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:6px}
+.row{display:flex;gap:8px}
+.row .field{flex:1}
+.hint{color:var(--muted);font-size:11px;margin:6px 0 10px}
+/* fieldset-style grouping inside panels */
+.group{border:1px solid var(--line);border-radius:8px;padding:12px 10px 3px;
+  margin-bottom:14px;position:relative;background:rgba(255,255,255,.012)}
+.group-cap{position:absolute;top:-8px;left:9px;font-size:9px;font-weight:600;
+  letter-spacing:.05em;text-transform:uppercase;color:var(--accent);
+  background:var(--panel);padding:0 6px}
+
+.main{display:flex;flex-direction:column;min-height:0}
+
+/* toolbar — two rows of labeled clusters */
+.toolbar{display:flex;flex-direction:column;gap:9px;
+  padding:12px 12px 8px;background:var(--panel);border-bottom:1px solid var(--line)}
+.tb-row{display:flex;align-items:stretch;gap:9px;flex-wrap:wrap}
+.tb-cluster{display:flex;align-items:center;gap:6px;position:relative;
+  border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--panel2)}
+.tb-cap{position:absolute;top:-8px;left:8px;font-size:9px;font-weight:600;
+  letter-spacing:.05em;text-transform:uppercase;color:var(--muted);
+  background:var(--panel);padding:0 5px}
+.tb-cluster label{color:var(--muted);font-size:11px;display:flex;align-items:center;gap:3px}
+.grp{display:flex;align-items:center;gap:6px}
+.toolbar label{color:var(--muted);font-size:11px}
+#doorPct{width:150px}
+
+.canvas-wrap{position:relative;flex:1;min-height:0;background:var(--canvas-bg);display:flex}
+.canvas-pane{position:relative;flex:1;min-width:0;min-height:0}
+#pane2{border-left:1px solid var(--line)}
+canvas{display:block;width:100%;height:100%}
+.pane-label{position:absolute;top:8px;left:10px;font-size:11px;color:var(--muted);
+  background:var(--overlay-soft);padding:2px 7px;border-radius:5px}
+.legend{position:absolute;top:10px;right:10px;background:var(--overlay-strong);
+  border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:11px}
+.legend div{display:flex;align-items:center;gap:6px;margin:2px 0}
+.sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+
+/* bottom tabbed dock */
+.dock{height:auto;background:var(--panel);border-top:1px solid var(--line);
+  display:flex;flex-direction:column;min-height:0}
+.dock-head{display:flex;align-items:center;gap:4px;padding:5px 8px;
+  border-bottom:1px solid var(--line);background:var(--panel2)}
+.dock-tab{font-size:11px;padding:4px 12px;border:1px solid transparent;
+  border-radius:6px 6px 0 0;cursor:pointer;color:var(--muted);background:none;margin-bottom:-6px}
+.dock-tab:hover{color:var(--ink);border-color:transparent}
+.dock-tab.active{color:var(--ink);background:var(--panel);border-color:var(--line);border-bottom-color:var(--panel)}
+.dock-spacer{flex:1}
+.dock-body{flex:1;overflow:auto;min-height:0}
+.dock-section{padding:6px 12px;font-size:11px}
+.dock-section strong{color:var(--accent);font-size:11px}
+
+table{border-collapse:collapse;width:100%;font-size:11px}
+th,td{border-bottom:1px solid var(--line);padding:4px 8px;text-align:left;white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel2);z-index:1}
+tr.blind{background:rgba(248,81,73,.10)}
+td select,td input{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+  border-radius:4px;padding:2px 4px;font-size:11px}
+.badge{padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600}
+.b-pass{background:rgba(57,211,83,.2);color:var(--green)}
+.b-fail{background:rgba(248,81,73,.2);color:var(--red)}
+.b-cond{background:rgba(227,179,65,.2);color:var(--yellow)}
+.b-nt{background:rgba(110,118,129,.25);color:var(--gray)}
+.list-item{background:var(--panel2);border:1px solid var(--line);border-radius:6px;
+  padding:8px;margin-bottom:8px}
+.list-item .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.list-item .top strong{font-size:12px}
+.mini{font-size:10px;color:var(--muted)}
+.danger{color:var(--red)}
+a.dl{color:var(--accent)}
+.sensor-details{overflow:hidden;transition:max-height .2s ease}
+.sensor-details.collapsed{max-height:0!important}
+.sensor-toggle{cursor:pointer;font-size:10px;color:var(--muted);border:none;background:none;padding:2px 6px}
+.sensor-toggle:hover{color:var(--ink)}
+.field-note{color:var(--muted);font-size:10px;margin:-4px 0 8px;font-style:italic}
+</style>
+</head>
+<body>
+<header>
+  <h1>Wing Door Sensor FOV Tool</h1>
+  <span class="spacer"></span>
+  <button onclick="newProject()">New</button>
+  <button onclick="importJson()">Open</button>
+  <button onclick="exportJson()">Save</button>
+  <span class="hbar-sep"></span>
+  <button onclick="exportCsv()">Export CSV</button>
+  <button onclick="exportPng()">Export PNG</button>
+  <span class="hbar-sep"></span>
+  <button id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark mode">🌙 Dark</button>
+</header>
+
+<div class="layout">
+  <!-- ------------------------- CONTROL PANEL ------------------------- -->
+  <div class="side">
+    <div class="tabs" id="tabs">
+      <span class="tabgroup-label">Setup</span>
+      <button data-tab="project" class="active">Project</button>
+      <button data-tab="door">Door</button>
+      <button data-tab="sensor">Sensors</button>
+      <button data-tab="obstacle">Objects</button>
+      <span class="tabgroup-label">Test</span>
+      <button data-tab="test">Test Points</button>
+      <button data-tab="results">Results</button>
+      <span class="tabgroup-label">View</span>
+      <button data-tab="regions">Regions</button>
+      <span class="tabgroup-label">Coverage</span>
+      <button data-tab="zones">Zones</button>
+      <button data-tab="compare">Compare</button>
+    </div>
+    <div class="panels">
+
+      <!-- Page 1: Project -->
+      <div class="panel active" data-tab="project">
+        <h2>Project Information</h2>
+        <div class="field"><label>Project name</label><input id="p_name"></div>
+        <div class="row">
+          <div class="field"><label>Vehicle model</label><input id="p_vehicle"></div>
+          <div class="field"><label>Customer</label><input id="p_customer"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Door side</label>
+            <select id="p_side"><option value="LH">Left (LH)</option><option value="RH">Right (RH)</option></select></div>
+          <div class="field"><label>Prepared by</label><input id="p_by"></div>
+        </div>
+        <div class="field"><label>Test date</label><input id="p_date" type="date"></div>
+        <div class="field"><label>Notes</label><textarea id="p_notes" rows="3"></textarea></div>
+      </div>
+
+      <!-- Page 2: Door -->
+      <div class="panel" data-tab="door">
+        <h2>Wing-Door Setup</h2>
+        <p class="hint"><b>Front view (Y horizontal, Z up).</b> Falcon-/gullwing
+          door hinged near the roof; it lifts up-and-out about the hinge in the
+          Y&ndash;Z plane. LH = left door (right of screen from front); RH = right door (left of screen).</p>
+        <div class="group">
+          <span class="group-cap">Presets &amp; side</span>
+          <div class="row" style="align-items:flex-end">
+            <div class="field"><label>Load preset</label>
+              <select id="d_presetSel">
+                <option value="">— choose —</option>
+                <option value="wing">Wing door default</option>
+                <option value="p700r">P700 Right door</option>
+                <option value="p700l">P700 Left door</option>
+                <option value="p800r">P800 Right door</option>
+                <option value="p800l">P800 Left door</option>
+              </select>
+            </div>
+            <div class="field" style="flex:0 0 auto"><button onclick="loadDoorPreset()">Load</button></div>
+          </div>
+          <div class="row" style="align-items:center;margin-bottom:9px">
+            <span class="mini" style="margin-right:6px">Door side:</span>
+            <button id="d_sideLH" onclick="setDoorSide('LH')" style="min-width:48px">LH</button>
+            <button id="d_sideRH" onclick="setDoorSide('RH')" style="min-width:48px">RH</button>
+          </div>
+        </div>
+        <div class="group">
+          <span class="group-cap">Geometry</span>
+          <div class="row">
+            <div class="field"><label>Hinge Y (mm)</label><input id="d_hy" type="number"></div>
+            <div class="field"><label>Hinge Z / roof (mm)</label><input id="d_hz" type="number"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label>Max opening angle (°)</label><input id="d_max" type="number"></div>
+            <div class="field"><label>Closed orientation (°)</label><input id="d_base" type="number"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label>Door height (mm, report)</label><input id="d_h" type="number"></div>
+            <div class="field"><label>Hinge X (fore-aft, mm)</label><input id="d_hx" type="number"></div>
+          </div>
+          <div class="field"><label>Door length (fore-aft X, mm &mdash; used by top view)</label>
+            <input id="d_len" type="number"></div>
+        </div>
+        <div class="group">
+          <span class="group-cap">Outline</span>
+          <div class="field"><label>Corner points, door-local
+            <b>Y,Z</b> per line (mm; hinge = 0,0)</label>
+            <textarea id="d_profile" rows="8" spellcheck="false"
+              style="font-family:monospace;font-size:11px"></textarea></div>
+          <button onclick="applyProfile()">Apply outline</button>
+        </div>
+        <div class="group">
+          <span class="group-cap">Door photo (3D)</span>
+          <div class="field"><label>Image placed on the vehicle ZX reference plane
+            and projected along Y onto the door outer surface</label>
+            <input id="d_img" type="file" accept="image/*" onchange="uploadDoorImage(this)"></div>
+          <div class="row">
+            <div class="field"><label>ZX source X shift (mm)</label>
+              <input id="d_img_sx" type="number" value="0" oninput="setDoorImageAdjustment('sourceX',this.value)"></div>
+            <div class="field"><label>ZX source Z shift (mm)</label>
+              <input id="d_img_sz" type="number" value="0" oninput="setDoorImageAdjustment('sourceZ',this.value)"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label>Projected X shift on door (mm)</label>
+              <input id="d_img_px" type="number" value="0" oninput="setDoorImageAdjustment('projectX',this.value)"></div>
+            <div class="field"><label>Projected Z shift on door (mm)</label>
+              <input id="d_img_pz" type="number" value="0" oninput="setDoorImageAdjustment('projectZ',this.value)"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label title="Show or hide only the original ZX reference-plane image">
+              <input id="d_img_source" type="checkbox" onchange="setDoorImageSourceVisible(this.checked)" checked>
+              Show ZX plane picture</label></div>
+            <div class="field"><label title="Mirror the ZX image along the vehicle X axis">
+              <input id="d_img_flip" type="checkbox" onchange="setDoorImageFlip(this.checked)">
+              Flip front ↔ rear</label></div>
+          </div>
+          <div class="row">
+            <div class="field"><label>Opacity</label>
+              <input id="d_img_op" type="range" min="0" max="100" value="100"
+                oninput="setDoorImageOpacity(this.value)"></div>
+            <div class="field" style="flex:0 0 auto;align-self:flex-end">
+              <button onclick="removeDoorImage()">Remove</button></div>
+          </div>
+          <span id="d_img_status" class="hint"></span>
+        </div>
+        <p class="hint">Door positions 0–100% in 10% steps are generated
+          automatically (11 positions, criterion&nbsp;4). Use the door slider above
+          the canvas to view any position, and enable <b>Swept FOV</b> to see all
+          positions at once.</p>
+      </div>
+
+      <!-- Page 3: Sensors -->
+      <div class="panel" data-tab="sensor">
+        <h2>Sensor Setup</h2>
+        <p class="hint">Position (door-local <b>Y,Z</b>, origin = hinge) and yaw are
+          fixed to the door &mdash; the sensor lifts and rotates with it. Yaw is the
+          sensing direction in the Y&ndash;Z plane, measured CCW: 0&nbsp;=&nbsp;+Y,
+          90&nbsp;=&nbsp;up (+Z), 180&nbsp;=&nbsp;&minus;Y, 270&nbsp;=&nbsp;down. For a
+          LH door, outboard-down is around 195&ndash;200°.</p>
+        <button class="primary" onclick="addSensor()">+ Add sensor</button>
+        <div id="sensorList" style="margin-top:10px"></div>
+      </div>
+
+      <!-- Page 4: Obstacles -->
+      <div class="panel" data-tab="obstacle">
+        <h2>Obstacle Setup</h2>
+        <p class="hint">Obstacle positions are in the vehicle frame; the front view
+          uses <b>Y (horizontal)</b> and <b>Z (height)</b>. X is fore-aft.</p>
+        <button class="primary" onclick="addObstacle()">+ Add obstacle</button>
+        <div id="obstacleList" style="margin-top:10px"></div>
+      </div>
+
+      <!-- Page 5: Test points -->
+      <div class="panel" data-tab="test">
+        <h2>Static FOV Test Points</h2>
+        <p class="hint">Enable “Add point on click”, then click the canvas — a test
+          point is created at the current door position, and its in-FOV status
+          (PASS/FAIL) is computed automatically. Points can also be added manually.</p>
+        <div class="group">
+          <span class="group-cap">Add single point</span>
+          <div class="row" style="align-items:flex-end">
+            <div class="field"><label>Point ID</label><input id="tp_id" type="text" value="" placeholder="auto" style="width:80px"></div>
+            <div class="field"><label>Obstacle</label>
+              <select id="tp_obs"></select></div>
+          </div>
+          <div class="row">
+            <div class="field"><label>X fore-aft (mm)</label><input id="tp_x" type="number" value="0"></div>
+            <div class="field"><label>Y horiz (mm)</label><input id="tp_y" type="number" value="-1600"></div>
+          </div>
+          <button onclick="addTestPointManual()">+ Add test point</button>
+          <button onclick="clearTestPoints()">Clear all</button>
+          <div id="singlePointsList" style="margin-top:6px"></div>
+        </div>
+        <div class="group">
+          <span class="group-cap">Door-zone set (21 pts)</span>
+          <div class="row" style="align-items:flex-end">
+            <div class="field"><label>Object for new set</label>
+              <select id="tpSetObs"></select></div>
+            <div class="field" style="flex:0 0 auto"><button class="primary" onclick="loadDoorZoneTestSet()">+ Add set</button></div>
+          </div>
+          <p class="mini" style="color:var(--muted)">7x3 grid, z=0. Y measured outboard from the door edge. Each set has its own X/Y shift.</p>
+          <div id="testSetsList"></div>
+        </div>
+        <p class="hint">Blind points (inside the door swept
+          envelope but outside the sensor FOV, criterion&nbsp;12) are highlighted red
+          in the results table.</p>
+      </div>
+
+      <!-- Results: full test-point table -->
+      <div class="panel" data-tab="results">
+        <h2>Test Point Results</h2>
+        <p class="hint">Select an obstacle to calculate results for all test points using that obstacle's dimensions.</p>
+        <div style="margin-bottom:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label style="font-size:11px">Obstacle: <select id="resultsObsSel" onchange="renderTpTable()" style="font-size:11px"></select></label>
+          <span id="resultsDoorAngle" style="font-size:11px;color:var(--muted)"></span>
+          <span style="flex:1"></span>
+          <button onclick="copyResultsTable()" style="font-size:10px;padding:2px 10px">Copy table</button>
+        </div>
+        <div id="resultsTableWrap" style="overflow-x:auto">
+          <table id="resultsTable" style="font-size:11px">
+            <thead id="resultsHead"></thead>
+            <tbody id="resultsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Map regions (top-view measured-FOV areas) -->
+      <div class="panel" data-tab="regions">
+        <h2>Map Regions (Top View)</h2>
+        <p class="hint">Draw measured-FOV / coverage areas on the <b>Top (X–Y)</b>
+          view. Click <b>+ Add region</b>, then click the top view to drop corner
+          points; <b>double-click</b> or <b>Finish</b> to close it. Use <b>Move</b>
+          to drag the whole area as a group, or <b>Edit</b> to drag corners, drag an
+          edge to insert a corner, or right-click a corner to delete it. Each region
+          shows its enclosed area (m²).</p>
+        <div class="row" style="align-items:center">
+          <button class="primary" onclick="addRegion()">+ Add region</button>
+          <button id="regFinishBtn" onclick="finishRegion()" style="display:none">Finish</button>
+        </div>
+        <p class="mini" id="regStatus" style="min-height:14px;color:var(--accent)"></p>
+        <div id="regionList" style="margin-top:6px"></div>
+      </div>
+
+      <!-- Coverage zones (front Y-Z plane) -->
+      <div class="panel" data-tab="zones">
+        <h2>Coverage Zones</h2>
+        <p class="hint">Zones are fixed bands in the <b>Front (Y–Z)</b> plane — they
+          stay put while the door lifts. Coverage = the share of a zone that falls
+          inside any active sensor's FOV. Because the sensors ride the door, it is
+          measured at every door position; <b>Worst</b> (the smallest across all
+          positions) is the safety-relevant figure. Turn on <b>Coverage zones</b>
+          in the toolbar overlays to see covered (green) vs gap (red) samples.</p>
+        <div class="row" style="align-items:center;margin-bottom:8px">
+          <label style="font-size:11px;flex:1">Grid step (mm)
+            <input id="z_grid" type="number" min="20" step="10" style="width:70px;font-size:11px">
+          </label>
+          <button onclick="recomputeCoverage()" style="font-size:11px">Recompute</button>
+        </div>
+        <div id="zoneList"></div>
+        <p class="mini" style="color:var(--muted);margin-top:4px">Distances are outboard
+          from the vehicle side (mm); heights are above ground (mm).</p>
+      </div>
+
+      <!-- Compare two sensor layouts -->
+      <div class="panel" data-tab="compare">
+        <h2>Compare Layouts</h2>
+        <p class="hint">Load two saved project JSON files that differ only in their
+          <b>sensors</b> (positions / angles). The <b>door geometry must match</b> —
+          the comparison is rejected otherwise, since the coverage numbers would not
+          be comparable. Zones and grid step are taken from the current project so
+          both sides are scored identically.</p>
+        <div class="row" style="gap:8px">
+          <div class="field" style="flex:1">
+            <label>Config A</label>
+            <button onclick="loadCompareFile('A')" style="width:100%">Load A…</button>
+            <p class="mini" id="cmpAName" style="color:var(--muted);min-height:14px"></p>
+          </div>
+          <div class="field" style="flex:1">
+            <label>Config B</label>
+            <button onclick="loadCompareFile('B')" style="width:100%">Load B…</button>
+            <p class="mini" id="cmpBName" style="color:var(--muted);min-height:14px"></p>
+          </div>
+        </div>
+        <div class="row" style="align-items:center;margin-bottom:6px">
+          <button class="primary" onclick="runCompare()" style="flex:1">Compare</button>
+          <button onclick="useCurrentAsCompare('A')" title="Use the current project as Config A">A = current</button>
+          <button onclick="useCurrentAsCompare('B')" title="Use the current project as Config B">B = current</button>
+        </div>
+        <p class="mini" id="cmpStatus" style="min-height:14px;color:var(--accent)"></p>
+        <div id="cmpResult"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="resize-handle" id="sidebarResize"></div>
+  <!-- ------------------------- MAIN VIEW ------------------------- -->
+  <div class="main">
+    <div class="toolbar">
+      <!-- Row 1: state & navigation -->
+      <div class="tb-row">
+        <div class="tb-cluster">
+          <span class="tb-cap">View</span>
+          <select id="viewPlane">
+            <option value="front">Front (Y–Z)</option>
+            <option value="top">Top (X–Y)</option>
+            <option value="split">Split (Front + Top)</option>
+            <option value="3d">3D</option>
+          </select>
+          <span class="grp" id="cam3dGroup" style="display:none;gap:2px">
+            <button onclick="set3dPreset('iso')" title="Isometric">Iso</button>
+            <button onclick="set3dPreset('top')" title="Top">Top</button>
+            <button onclick="set3dPreset('front')" title="Front">Front</button>
+            <button onclick="set3dPreset('side')" title="Side">Side</button>
+            <button onclick="fit3d(false),render()" title="Fit to view">Fit</button>
+          </span>
+          <button onclick="resetView()" title="Reset pan/zoom">Reset</button>
+        </div>
+        <div class="tb-cluster">
+          <span class="tb-cap">Door position</span>
+          <input type="range" id="doorPct" min="0" max="100" step="1" value="0">
+          <span id="doorPctVal" class="mini">0%</span>
+          <input type="number" id="doorAngInput" min="-180" max="180" step="0.5" value="0"
+            title="Door angle (°) — type to set position"
+            style="width:58px;font-size:11px;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:3px 4px">
+          <span class="mini">°</span>
+          <span id="doorTimeVal" class="mini"></span>
+        </div>
+        <div class="tb-cluster">
+          <span class="tb-cap">Playback</span>
+          <button onclick="animStep(-5)" title="Step back">⏮</button>
+          <button onclick="playAnim(-1)" title="Play closing">◀</button>
+          <button onclick="pauseAnim()" title="Pause">⏸</button>
+          <button onclick="playAnim(1)" title="Play opening">▶</button>
+          <button onclick="animStep(5)" title="Step forward">⏭</button>
+          <label>speed <input type="range" id="animSpeed" min="0.25" max="4" step="0.25" value="1" style="width:64px"></label>
+        </div>
+      </div>
+      <!-- Row 2: display & tools -->
+      <div class="tb-row">
+        <div class="tb-cluster">
+          <span class="tb-cap">Grid</span>
+          <button id="gridBtn100" class="primary" onclick="setGridCell(100)">10×10</button>
+          <button id="gridBtn50" onclick="setGridCell(50)">5×5</button>
+          <button id="gridBtn200" onclick="setGridCell(200)">20×20</button>
+        </div>
+        <div class="tb-cluster">
+          <span class="tb-cap">Overlays</span>
+          <label><input type="checkbox" id="showSwept"> Swept envelope</label>
+          <label><input type="checkbox" id="showGhost"> Swept FOV</label>
+          <label><input type="checkbox" id="showSweptFov3d" onchange="render()"> 3D swept FOV</label>
+          <label title="Hide portions of 3D sensor beams below ground level"><input type="checkbox" id="clipFovGround3d" onchange="render()" checked> Clip FOV at Z=0</label>
+          <label><input type="checkbox" id="showMeasured"> Measured FOV</label>
+          <label title="Show coverage zones + covered/gap samples on the Front view"><input type="checkbox" id="showZones"> Coverage zones</label>
+          <label><input type="checkbox" id="showTpIds"> Point IDs</label>
+        </div>
+        <div class="tb-cluster">
+          <span class="tb-cap">Heatmap</span>
+          <button onclick="computeHeatmap()" title="Colour grid by sensor detection zone (current door position)">Compute</button>
+          <button onclick="clearHeatmap()">Clear</button>
+          <label><input type="checkbox" id="showProxLines" onchange="const b=$('proxToggleBtn');if(b)b.textContent='Prox lines: '+(this.checked?'ON':'OFF');render()"> Proximity lines</label>
+        </div>
+        <div class="tb-cluster">
+          <span class="tb-cap">Tools</span>
+          <label><input type="checkbox" id="clickAdd"> Add point on click</label>
+          <label><input type="checkbox" id="moveObs"> Move obstacle</label>
+          <select id="moveObsSel" style="font-size:11px;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:3px 5px"></select>
+        </div>
+        <div class="tb-cluster">
+          <span class="tb-cap">Navigate</span>
+          <span class="mini">wheel = zoom · drag = pan</span>
+        </div>
+      </div>
+    </div>
+    <div class="canvas-wrap">
+      <div class="canvas-pane" id="pane1">
+        <canvas id="cv"></canvas>
+        <span class="pane-label" id="cvLabel"></span>
+        <button id="proxToggleBtn" onclick="toggleProxLines()"
+          title="Show/hide proximity lines"
+          style="position:absolute;top:6px;right:6px;font-size:10px;padding:3px 7px;opacity:0.82;z-index:10">Prox lines: OFF</button>
+      </div>
+      <div class="canvas-pane" id="pane2" style="display:none">
+        <canvas id="cv2"></canvas>
+        <span class="pane-label" id="cv2Label"></span>
+      </div>
+      <div class="legend">
+        <div><span class="sw" style="background:var(--purple)"></span>Door swept volume</div>
+        <div><span class="sw" style="background:var(--blue)"></span>Theoretical FOV</div>
+        <div><span class="sw" style="background:var(--green)"></span>Detected / PASS</div>
+        <div><span class="sw" style="background:var(--red)"></span>No detect / FAIL</div>
+        <div><span class="sw" style="background:var(--gray)"></span>Not tested</div>
+      </div>
+    </div>
+    <div class="dock" id="resultsSection">
+      <div class="dock-head">
+        <span class="dock-section" id="dockTitle" style="padding:0;margin:0;font-size:11px"><strong>Current position</strong></span>
+        <span class="dock-spacer"></span>
+        <button id="dockHideBtn" onclick="toggleBottomDock()" style="font-size:10px;padding:2px 10px">Hide</button>
+      </div>
+      <div class="dock-body" id="dockBody">
+        <table id="dockTable" style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead id="dockHead"></thead>
+          <tbody id="dockBody2"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ====================== 2. STATE MODEL ====================== */
+const OBSTACLE_TYPES = ["Flat wall","Pole","Adult-size object",
+  "Hanging object","Low concrete block","Custom obstacle"];
+const SENSOR_TYPES = ["Ultrasonic","Short-range mmWave radar","Time-of-flight",
+  "Capacitive proximity","Generic distance"];
+
+// Per-type default dimensions (mm) and canvas draw shape.
+// width=Y lateral, depth=X fore-aft, height=Z vertical
+// shape: "rect" | "circle" | "hbar" | "diamond"
+const OBSTACLE_PRESETS = {
+  "Flat wall":         {width:100,  depth:2000, height:2500, shape:"rect"},
+  "Pole":              {width:80,   depth:80,   height:2000, shape:"circle"},
+  "Adult-size object": {width:500,  depth:300,  height:1750, shape:"human"},
+  "Hanging object":    {width:400,  depth:400,  height:600,  shape:"diamond"},
+  "Low concrete block":{width:400,  depth:400,  height:200,  shape:"rect"},
+  "Custom obstacle":   {width:200,  depth:200,  height:1000, shape:"rect"},
+};
+
+let project, seq = {s:0,o:0,t:0};
+let gridCellMm = 100; // canvas grid cell size in mm (100 = 10 cm default)
+let heatmapData = {}; // keyed by plane: "front" / "top" → [{wx,wy,color}]
+
+// Default wing-door front-view (Y-Z) silhouette, door-local, hinge at (0,0).
+// Authored for a LEFT (LH) door hanging down the body side from the roof hinge;
+// RH is auto-mirrored in Y at draw time. Units mm. {y: outboard-, z: up}.
+function wingDefaultProfile(){
+  return [
+    {y:0,    z:0},      // hinge (roof edge, near centerline)
+    {y:-960, z:-70},    // outboard roof rail
+    {y:-1010,z:-640},   // beltline / window sill (outer)
+    {y:-960, z:-1240},  // rocker / sill (outer, leading lower edge)
+    {y:-840, z:-1240},  // rocker (inner)
+    {y:-870, z:-640},   // beltline (inner)
+    {y:-760, z:-80}     // back toward hinge (inner)
+  ];
+}
+// Coverage zones live in the FRONT (Y-Z) plane and are fixed in the world (they
+// do NOT ride the door). Each is an axis-aligned band described by an outboard
+// distance range (yNear..yFar, mm from the vehicle side, always positive) and a
+// height range (zLow..zHigh, mm above ground). The outboard direction flips with
+// the door side, so the band is mirrored into plane coords at draw/measure time.
+const ZONE_PALETTE=["#e3b341","#4da3ff","#a371f7","#39d353","#ff9800"];
+function defaultZones(){
+  return [
+    { id:"Z_ground", name:"Ground", color:"#e3b341",
+      yNear:0,    yFar:1600, zLow:0,   zHigh:300,  visible:true, weight:1 },
+    { id:"Z_close",  name:"Close zone", color:"#f85149",
+      yNear:900,  yFar:1500, zLow:200, zHigh:1600, visible:true, weight:2 },
+    { id:"Z_near",   name:"Near zone", color:"#4da3ff",
+      yNear:1500, yFar:2500, zLow:200, zHigh:1600, visible:true, weight:1 },
+  ];
+}
+// Four corners of a zone band in front-plane coords ({x:Y, y:Z}). Outboard is
+// -X for a LEFT door, +X for a RIGHT door (matches doorLocalToPlane mirroring).
+function zonePolygon(zone, side){
+  const so = side==="RH" ? 1 : -1;
+  return [
+    { x: so*zone.yNear, y: zone.zLow },
+    { x: so*zone.yFar,  y: zone.zLow },
+    { x: so*zone.yFar,  y: zone.zHigh },
+    { x: so*zone.yNear, y: zone.zHigh },
+  ];
+}
+function defaultProject(){
+  return {
+    schemaVersion:2,
+    project:{ name:"New FOV Study", vehicleModel:"", customer:"",
+      doorSide:"LH", preparedBy:"", testDate:new Date().toISOString().slice(0,10), notes:"" },
+    door:{ hingeX:0, hingeY:0, hingeZ:1500, heightMm:1250, lengthMm:1000,
+      maxOpenDeg:80, baseAngleDeg:0, profile:wingDefaultProfile(),
+      openTimeS:5, closeTimeS:5,
+      positionsPct:[0,10,20,30,40,50,60,70,80,90,100] },
+    sensors:[ demoSensor() ],
+    obstacles:[ { id:"O1", type:"Pole", x:0, y:-1600, z:0, width:80, depth:80, height:2000 } ],
+    testPoints:[],
+    testSets:[],
+    // User-drawn map regions (top X-Y view): measured-FOV / coverage areas.
+    regions:[],
+    // Coverage zones (front Y-Z plane): parametric bands whose % coverage by
+    // the union of active sensor FOVs is tracked across all door positions.
+    zones: defaultZones(),
+    // System response chain (§12.4) in ms + evaluation thresholds (§12.5).
+    timing:{ sensorMs:60, commMs:20, ecuMs:30, motorMs:40, mechMs:150,
+      targetMarginMs:200, minClearanceMm:50, gridStepPct:0.5 },
+    // Repeatability detection-rate thresholds (§16), percent.
+    eval:{ passRatePct:95, condRatePct:90 },
+    // Multi-sensor overlap sampling grid (§11.4, §24), mm.
+    overlap:{ gridMm:60 },
+    view:{ plane:"front", doorPct:0 },
+    viewFront: planeDefaults("front"), // {zoom,panX,panY}
+    viewTop: planeDefaults("top"),
+    view3d:{ target:[0,-600,900], dist:5200, u:[0,-1,0], v:[0,0,1], w:[1,0,0] }
+  };
+}
+// Per-plane default pan/zoom so switching views frames the scene.
+function planeDefaults(plane){
+  return plane==="top" ? {zoom:0.14, panX:0, panY:-90}
+                       : {zoom:0.14, panX:70, panY:120};
+}
+// Total system response time (§12.4), ms.
+function totalResponseMs(t){ t=t||project.timing;
+  return (t.sensorMs||0)+(t.commMs||0)+(t.ecuMs||0)+(t.motorMs||0)+(t.mechMs||0); }
+function demoSensor(){
+  // Door-local: near the lower outer (leading) edge, facing outboard-and-down.
+  return { id:"S1", name:"Lower outer edge", type:"Ultrasonic",
+    partNo:"", serialNo:"", posX:0, posY:-960, posZ:-1150, yawDeg:195, pitchDeg:0,
+    hFovDeg:90, vFovDeg:60, minRangeMm:100, maxRangeMm:1500,
+    accuracyMm:10, updateRateHz:20, latencyMs:50,
+    warningMm:800, stopMm:300, shape:"Fan", active:true,
+    color:"#4da3ff", showFov:true };
+}
+
+/* ====================== 3. GEOMETRY ENGINE ======================
+   Wing-door FRONT view. Working plane = (Y, Z): plane.x = Y (horizontal,
+   outboard), plane.y = Z (up). The math functions are plane-agnostic and
+   operate on generic {x,y} points. Door rotates about the roof hinge in the
+   Y-Z plane, lifting up-and-out. RH is auto-mirrored in Y. */
+const deg2rad = d => d*Math.PI/180;
+const rad2deg = r => r*180/Math.PI;
+
+function rotate2D(p, ang, pivot){
+  const c=Math.cos(ang), s=Math.sin(ang);
+  const dx=p.x-pivot.x, dy=p.y-pivot.y;
+  return { x:pivot.x + dx*c - dy*s, y:pivot.y + dx*s + dy*c };
+}
+// 0% -> 0deg, 100% -> maxOpen (signed). LH lifts CW (-), RH lifts CCW (+).
+function doorAngleForPercent(pct, door, side){
+  const sign = side==="RH" ? 1 : -1;
+  return sign * (pct/100) * door.maxOpenDeg;
+}
+// World rotation applied to the door at a given (signed) opening angle (deg).
+function doorWorldAngleRad(openDeg, door){
+  return deg2rad(door.baseAngleDeg + openDeg);
+}
+// Transform a door-local (ly=Y, lz=Z) point to the plane at an opening angle.
+function doorLocalToPlane(ly, lz, door, openDeg, side){
+  const hinge={x:door.hingeY, y:door.hingeZ};
+  const mir = side==="RH" ? -1 : 1;
+  const ang = doorWorldAngleRad(openDeg, door);
+  return rotate2D({x:hinge.x + mir*ly, y:hinge.y + lz}, ang, hinge);
+}
+// Door outline polygon in plane coords at an opening angle.
+function doorPolygonAtAngle(door, openDeg, side){
+  return (door.profile||[]).map(p=>doorLocalToPlane(p.y, p.z, door, openDeg, side));
+}
+// Sensor pose (position + facing angle rad) in plane coords at opening angle.
+function sensorPoseAtAngle(sensor, door, openDeg, side){
+  const mir = side==="RH" ? -1 : 1;
+  const pos=doorLocalToPlane(sensor.posY, sensor.posZ, door, openDeg, side);
+  const ang=doorWorldAngleRad(openDeg, door);
+  const facing=ang + mir*deg2rad(sensor.yawDeg); // sensor main sensing direction
+  return { x:pos.x, y:pos.y, facing, pitch:sensor.pitchDeg||0 };
+}
+// Project the 3D beam axis [sin p, cos f·cos p, sin f·cos p] (X,Y,Z) into a view
+// plane and return {angle, scale}: the in-plane heading and the length fraction
+// that survives the projection (foreshortening). At pitch 0 this is a no-op
+// (front angle = facing, scale = 1), so unpitched sensors are unchanged.
+function beamProject(facing, pitchDeg, plane){
+  const p=deg2rad(pitchDeg||0), cp=Math.cos(p), sp=Math.sin(p);
+  const ax=sp, ay=Math.cos(facing)*cp, az=Math.sin(facing)*cp; // X, Y, Z
+  return plane==="top"
+    ? { angle:Math.atan2(ay, ax), scale:Math.hypot(ax, ay) }   // X-Y view
+    : { angle:Math.atan2(az, ay), scale:Math.hypot(ay, az) };  // Y-Z (front) view
+}
+// Ray-casting point-in-polygon.
+function pointInPolygon(pt, poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i].x, yi=poly[i].y, xj=poly[j].x, yj=poly[j].y;
+    const hit=((yi>pt.y)!==(yj>pt.y)) &&
+      (pt.x < (xj-xi)*(pt.y-yi)/(yj-yi)+xi);
+    if(hit) inside=!inside;
+  }
+  return inside;
+}
+// True if the point lies within any active sensor's FOV at the given door %.
+// pt is a plane point {x:Y, y:Z}.
+function isInAnyFov(pt, doorPct){
+  const side=project.project.doorSide;
+  for(const s of project.sensors){
+    if(!s.active) continue;
+    const poly=sensorFovProject(s, project.door, doorAngleForPercent(doorPct, project.door, side), side, "front");
+    if(pointInPolygon(pt, poly)) return s.id;
+  }
+  return null;
+}
+// Check if obstacle rectangle (front plane) overlaps any active sensor FOV.
+function isObsInAnyFov(tp, obs, doorPct){
+  if(!obs) return isInAnyFov({x:tp.y, y:tp.z}, doorPct);
+  const hw=(obs.width||60)/2, h=obs.height||1000;
+  const rect={y1:tp.y-hw, y2:tp.y+hw, z1:tp.z, z2:tp.z+h};
+  const corners=[{x:rect.y1,y:rect.z1},{x:rect.y2,y:rect.z1},
+                 {x:rect.y2,y:rect.z2},{x:rect.y1,y:rect.z2}];
+  const side=project.project.doorSide;
+  for(const s of project.sensors){
+    if(!s.active) continue;
+    const poly=sensorFovProject(s, project.door, doorAngleForPercent(doorPct, project.door, side), side, "front");
+    if(polyRectsOverlap(poly, corners, rect)) return s.id;
+  }
+  return null;
+}
+function _segsIntersect(a,b,c,d){
+  const cross=(u,v)=>u.x*v.y-u.y*v.x;
+  const sub=(p,q)=>({x:p.x-q.x,y:p.y-q.y});
+  const r=sub(b,a), s=sub(d,c), rxs=cross(r,s);
+  if(Math.abs(rxs)<1e-10) return false;
+  const qp=sub(c,a), t=cross(qp,s)/rxs, u=cross(qp,r)/rxs;
+  return t>=0&&t<=1&&u>=0&&u<=1;
+}
+function polyRectsOverlap(poly, corners, rect){
+  for(const c of corners) if(pointInPolygon(c, poly)) return true;
+  for(const v of poly) if(v.x>=rect.y1&&v.x<=rect.y2&&v.y>=rect.z1&&v.y<=rect.z2) return true;
+  const rectEdges=[[corners[0],corners[1]],[corners[1],corners[2]],
+                   [corners[2],corners[3]],[corners[3],corners[0]]];
+  for(let i=0;i<poly.length;i++){
+    const a=poly[i], b=poly[(i+1)%poly.length];
+    for(const [c,d] of rectEdges) if(_segsIntersect(a,b,c,d)) return true;
+  }
+  return false;
+}
+// Andrew's monotone-chain convex hull.
+function convexHull(pts){
+  const p=pts.slice().sort((a,b)=>a.x-b.x||a.y-b.y);
+  if(p.length<3) return p;
+  const cross=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);
+  const lo=[],hi=[];
+  for(const q of p){ while(lo.length>=2&&cross(lo[lo.length-2],lo[lo.length-1],q)<=0)lo.pop(); lo.push(q); }
+  for(let i=p.length-1;i>=0;i--){ const q=p[i]; while(hi.length>=2&&cross(hi[hi.length-2],hi[hi.length-1],q)<=0)hi.pop(); hi.push(q); }
+  lo.pop(); hi.pop(); return lo.concat(hi);
+}
+// Douglas–Peucker polyline simplification (preserves corners). pts: [{x,y}].
+function simplifyDP(pts, tol){
+  if(pts.length<3) return pts.slice();
+  const keep=new Array(pts.length).fill(false);
+  keep[0]=keep[pts.length-1]=true;
+  const stack=[[0,pts.length-1]];
+  while(stack.length){
+    const [a,b]=stack.pop(), A=pts[a], B=pts[b];
+    const dx=B.x-A.x, dy=B.y-A.y, L=Math.hypot(dx,dy)||1;
+    let idx=-1, dmax=0;
+    for(let i=a+1;i<b;i++){
+      const d=Math.abs((pts[i].x-A.x)*dy-(pts[i].y-A.y)*dx)/L;
+      if(d>dmax){ dmax=d; idx=i; }
+    }
+    if(dmax>tol && idx>-1){ keep[idx]=true; stack.push([a,idx],[idx,b]); }
+  }
+  return pts.filter((_,i)=>keep[i]);
+}
+// Simplify a closed ring: DP fails when endpoints coincide, so split the ring
+// at the vertex farthest from pts[0] and DP each arc.
+function simplifyClosed(pts, tol){
+  let r=pts.slice();
+  if(r.length>1){ const a=r[0], b=r[r.length-1];
+    if(Math.hypot(a.x-b.x,a.y-b.y)<1e-6) r.pop(); } // drop duplicate closing point
+  if(r.length<4) return r;
+  let far=0, dm=-1;
+  for(let i=1;i<r.length;i++){ const d=(r[i].x-r[0].x)**2+(r[i].y-r[0].y)**2; if(d>dm){dm=d;far=i;} }
+  const a=simplifyDP(r.slice(0,far+1), tol);
+  const b=simplifyDP(r.slice(far), tol);           // far … last
+  return a.concat(b.slice(1));                      // drop shared 'far' vertex
+}
+/* ---- Door profile presets ---- */
+// Profile Y values are always negative (door hangs left of hinge in local coords).
+// side="LH" (mir=1) keeps Y negative → door appears on LEFT of screen (right door, front view).
+// side="RH" (mir=-1) negates Y → door appears on RIGHT of screen (left door, front view).
+const DOOR_PROFILE_PRESETS={
+  "wing":  {side:"LH", pts:null},
+  "p700r": {side:"LH", pts:[[0,0],[-62,7],[-599,22],[-977,-426],[-964,-1139],[-799,-1205],[-740,-980],[-690,-924],[-620,-118],[-119,-16]]},
+  "p700l": {side:"RH", pts:[[0,0],[-62,7],[-599,22],[-977,-426],[-964,-1139],[-799,-1205],[-740,-980],[-690,-924],[-620,-118],[-119,-16]]},
+  "p800r": {side:"LH", pts:[[0,0],[-55,46],[-598,-1],[-970,-523],[-982,-1184],[-855,-1356],[-766,-1198],[-696,-1082],[-566,-91],[-74,-37]]},
+  "p800l": {side:"RH", pts:[[0,0],[-55,46],[-598,-1],[-970,-523],[-982,-1184],[-855,-1356],[-766,-1198],[-696,-1082],[-566,-91],[-74,-37]]},
+};
+function loadDoorPreset(){
+  const key=$("d_presetSel").value; if(!key) return;
+  const preset=DOOR_PROFILE_PRESETS[key];
+  const rawPts=preset.pts || wingDefaultProfile().map(p=>[p.y,p.z]);
+  const prof=rawPts.map(([y,z])=>({y,z}));
+  project.door.profile=prof;
+  $("d_profile").value=prof.map(p=>p.y+","+p.z).join("\n");
+  // set matching door side so rotation direction is correct
+  project.project.doorSide=preset.side;
+  const sel=$("p_side"); if(sel) sel.value=preset.side;
+  syncDoorSideToggle();
+  recomputeAll(); render();
+}
+function sweptEnvelopePolygon(door, side){
+  let all=[];
+  for(const pct of door.positionsPct){
+    all=all.concat(doorPolygonAtAngle(door, doorAngleForPercent(pct, door, side), side));
+  }
+  return convexHull(all);
+}
+/* ---- View planes (front Y-Z / top X-Y) ----
+   curPlane is the plane being drawn in the current render pass (set by
+   renderPane); it lets one canvas draw front and another draw top in split. */
+let curPlane="front";
+// Map a world {x:X,y:Y,z:Z} point to the current plane's 2D {x:horiz,y:vert}.
+function toPlane(w){
+  return curPlane==="top" ? {x:w.x, y:w.y} : {x:w.y, y:w.z};
+}
+// Top-view door footprint: length (X) x current outboard Y-span, as {x:X,y:Y}.
+function doorFootprintTop(door, openDeg, side){
+  const front=doorPolygonAtAngle(door, openDeg, side); // {x:Y, y:Z}
+  let ymin=Infinity, ymax=-Infinity;
+  for(const p of front){ if(p.x<ymin)ymin=p.x; if(p.x>ymax)ymax=p.x; }
+  const L=door.lengthMm||1000, x0=door.hingeX-L/2, x1=door.hingeX+L/2;
+  return [{x:x0,y:ymin},{x:x1,y:ymin},{x:x1,y:ymax},{x:x0,y:ymax}];
+}
+// Top-view projected beam centre angle for a sensor (in the X-Y plane); used to
+// draw the sensor's direction arrow. The FOV shape itself comes from
+// sensorFovProject (the true 3D-cone silhouette).
+function sensorTopAngle(sensor, pose){
+  return beamProject(pose.facing, sensor.pitchDeg, "top").angle;
+}
+// Swept door envelope for the current render plane.
+function sweptEnvelopePlane(){
+  const door=project.door, side=project.project.doorSide, top=curPlane==="top";
+  let all=[];
+  for(const pct of door.positionsPct){
+    const od=doorAngleForPercent(pct, door, side);
+    all=all.concat(top ? doorFootprintTop(door,od,side) : doorPolygonAtAngle(door,od,side));
+  }
+  return convexHull(all);
+}
+
+// Distance from point to segment.
+function distPointSeg(p, a, b){
+  const dx=b.x-a.x, dy=b.y-a.y, l2=dx*dx+dy*dy;
+  let t = l2>0 ? ((p.x-a.x)*dx+(p.y-a.y)*dy)/l2 : 0;
+  t=Math.max(0,Math.min(1,t));
+  const cx=a.x+t*dx, cy=a.y+t*dy;
+  return Math.hypot(p.x-cx, p.y-cy);
+}
+// Distance from point to polygon boundary; 0 if inside.
+function distPointPolygon(p, poly){
+  if(pointInPolygon(p, poly)) return 0;
+  let d=Infinity;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    d=Math.min(d, distPointSeg(p, poly[j], poly[i]));
+  }
+  return d;
+}
+// Effective obstacle radius in the Y-Z plane = half its horizontal extent
+// (width or diameter). Height is the vertical extent and does not change the
+// horizontal door-edge clearance in this front-view slice.
+function obstacleRadius(o){ return (o.diameter? o.diameter : (o.width||0))/2; }
+
+/* ---- Dynamic motion analysis (§11.2, §12) ----
+   Sweep the door from 0->100% (opening) in fine steps and, for one obstacle,
+   find: first door position where it enters any sensor FOV (detection), and
+   first position where the moving door would contact it (door boundary within
+   obstacleRadius + minClearance). Convert positions to time via openTimeS and
+   compute the available reaction time, system response time, and safety margin. */
+function analyzeObstacle(o){
+  const door=project.door, side=project.project.doorSide;
+  const step=Math.max(0.1, project.timing.gridStepPct||0.5);
+  const pt={x:o.y, y:o.z};
+  const rad=obstacleRadius(o), clr=project.timing.minClearanceMm||0;
+  const tPerPct=(door.openTimeS||0)*1000/100; // ms per % of travel
+  let detectPct=null, contactPct=null, minClear=Infinity, minClearPct=0, everInFov=false;
+  const profile=[]; // {pct, clearance, inFov}
+  for(let pct=0; pct<=100+1e-6; pct+=step){
+    const od=doorAngleForPercent(pct, door, side);
+    const inFov = !!isInAnyFov(pt, pct);
+    const dPoly = distPointPolygon(pt, doorPolygonAtAngle(door, od, side));
+    const clearance = dPoly - rad; // gap between door edge and obstacle surface
+    if(inFov){ everInFov=true; if(detectPct===null) detectPct=pct; }
+    if(contactPct===null && clearance<=clr) contactPct=pct;
+    if(clearance<minClear){ minClear=clearance; minClearPct=pct; }
+    profile.push({pct, clearance, inFov});
+  }
+  const contacts = contactPct!==null;
+  const detectTimeMs = detectPct!==null ? detectPct*tPerPct : null;
+  const contactTimeMs = contacts ? contactPct*tPerPct : null;
+  // Reaction time available = time between confirmed detection and contact.
+  let reactionMs=null;
+  if(contacts && detectPct!==null && detectPct<=contactPct)
+    reactionMs = (contactPct-detectPct)*tPerPct;
+  const sysMs = totalResponseMs();
+  const marginMs = reactionMs!=null ? reactionMs - sysMs : null;
+  // Classification (§12.5, §23).
+  let cls;
+  if(!contacts) cls="NO CONTACT";
+  else if(detectPct===null || detectPct>contactPct) cls="NOT DETECTED";
+  else if(marginMs<=0) cls="FAIL";
+  else if(marginMs<(project.timing.targetMarginMs||0)) cls="MARGINAL";
+  else cls="PASS";
+  return { id:o.id, everInFov, detectPct, contactPct, contacts,
+    detectTimeMs, contactTimeMs, reactionMs, sysMs, marginMs,
+    minClear, minClearPct, cls, profile };
+}
+function analyzeAll(){ return project.obstacles.map(analyzeObstacle); }
+
+/* ---- Phase 4: multi-sensor overlap analysis (§11.4, §24) ----
+   Front-plane FOV polygons of all active sensors at a door position; a grid is
+   sampled over their bounding box and each cell counted by how many FOVs cover
+   it: 0 = gap (only flagged inside the covered hull), 1 = single, ≥2 = overlap.
+   Sensors are rigidly mounted so their mutual overlap is door-angle invariant. */
+function activeFovPolys(doorPct){
+  const side=project.project.doorSide, od=doorAngleForPercent(doorPct,project.door,side);
+  return project.sensors.filter(s=>s.active).map(s=>({ id:s.id,
+    poly:sensorFovProject(s,project.door,od,side,"front") }));
+}
+function overlapAnalysis(doorPct){
+  const fovs=activeFovPolys(doorPct), n=fovs.length;
+  if(n<1) return {n, cells:[], grid:0, coveredArea:0, overlapArea:0, gapArea:0,
+    overlapRatio:0, maxDepth:0, pairs:[]};
+  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  fovs.forEach(f=>f.poly.forEach(q=>{minx=Math.min(minx,q.x);miny=Math.min(miny,q.y);
+    maxx=Math.max(maxx,q.x);maxy=Math.max(maxy,q.y);}));
+  const step=Math.max(20, project.overlap.gridMm||60), cellA=step*step/1e6; // m²
+  const cov=[], pairCount={}; let overlap=0, maxDepth=0;
+  for(let x=minx;x<=maxx;x+=step) for(let y=miny;y<=maxy;y+=step){
+    const pt={x,y}; const hit=[];
+    for(let i=0;i<n;i++) if(pointInPolygon(pt,fovs[i].poly)) hit.push(i);
+    if(hit.length){ cov.push({x,y,cnt:hit.length}); maxDepth=Math.max(maxDepth,hit.length);
+      if(hit.length>=2){ overlap++;
+        for(let i=0;i<hit.length;i++) for(let j=i+1;j<hit.length;j++){
+          const k=fovs[hit[i]].id+" ∩ "+fovs[hit[j]].id; pairCount[k]=(pairCount[k]||0)+1; } }
+    }
+  }
+  // Gaps: uncovered grid points inside the convex hull of covered cells (§24.6).
+  const cells=cov.slice(); let gap=0;
+  if(cov.length>=3){
+    const hull=convexHull(cov.map(c=>({x:c.x,y:c.y})));
+    for(let x=minx;x<=maxx;x+=step) for(let y=miny;y<=maxy;y+=step){
+      const pt={x,y};
+      if(!fovs.some(f=>pointInPolygon(pt,f.poly)) && pointInPolygon(pt,hull)){
+        gap++; cells.push({x,y,cnt:0}); }
+    }
+  }
+  const pairs=Object.entries(pairCount).map(([k,c])=>({k, area:c*cellA}))
+    .sort((a,b)=>b.area-a.area);
+  return { n, cells, grid:step, coveredArea:cov.length*cellA, overlapArea:overlap*cellA,
+    gapArea:gap*cellA, overlapRatio:cov.length?overlap/cov.length:0, maxDepth, pairs };
+}
+
+/* ---- Phase 4: door-movement compensation / radar velocity (§13) ----
+   The sensor rides the door, so it has an ego linear velocity v = ω × r about
+   the hinge. A radar measures the obstacle's velocity relative to the sensor;
+   to recover the true (ground) object velocity, the sensor's radial ego velocity
+   toward the obstacle must be subtracted. For a stationary obstacle the measured
+   relative radial velocity equals −(ego radial), so the compensated value ≈ 0. */
+function doorOmegaRadPerS(){ // signed angular velocity during opening
+  const sign = project.project.doorSide==="RH" ? 1 : -1;
+  const t = project.door.openTimeS || 5;
+  return sign * deg2rad(project.door.maxOpenDeg) / t;
+}
+function sensorVelocity(sensor, doorPct){ // ego velocity (mm/s) in Y-Z plane
+  const side=project.project.doorSide, od=doorAngleForPercent(doorPct,project.door,side);
+  const pose=sensorPoseAtAngle(sensor,project.door,od,side); // pose.x=Y, pose.y=Z
+  const rx=pose.x-project.door.hingeY, ry=pose.y-project.door.hingeZ; // lever arm
+  const w=doorOmegaRadPerS();
+  return { x:-w*ry, y:w*rx, r:Math.hypot(rx,ry), pose }; // v = ω×r in 2D
+}
+// Per active sensor × obstacle at a door position: ego radial velocity and,
+// if a measured relative velocity is supplied, the motion-compensated value.
+function motionAnalysis(doorPct){
+  const rows=[];
+  for(const s of project.sensors){ if(!s.active) continue;
+    const v=sensorVelocity(s,doorPct), spd=Math.hypot(v.x,v.y);
+    for(const o of project.obstacles){
+      const ox=o.y-v.pose.x, oy=o.z-v.pose.y, d=Math.hypot(ox,oy)||1;
+      const egoRadial=(v.x*ox+v.y*oy)/d; // mm/s, + = sensor closing on obstacle
+      rows.push({ sensor:s.id, obstacle:o.id, r:v.r, speedMps:spd/1000,
+        egoMps:egoRadial/1000, measMps:(o.measRelMps==null?null:o.measRelMps),
+        compMps:(o.measRelMps==null?null:o.measRelMps-egoRadial/1000) });
+    }
+  }
+  return rows;
+}
+
+/* ---- Phase 3: configuration comparison (§11.4, Page 9) ----
+   The analysis engine reads the global `project`; withProject temporarily
+   swaps it so Config B is measured with the exact same code path as A. */
+function withProject(cfg, fn){
+  const save=project; project=cfg;
+  try{ return fn(); } finally{ project=save; }
+}
+function computeConfigMetrics(cfg){
+  return withProject(cfg, ()=>{
+    const tps=cfg.testPoints||[];
+    tps.forEach(evaluateTestPoint);
+    const pass=tps.filter(t=>t.result==="PASS").length;
+    const fail=tps.filter(t=>t.result==="FAIL").length;
+    const blind=tps.filter(t=>t.blind).length;
+    const cov=tps.length?Math.round(pass/tps.length*100):0;
+    const withReps=tps.filter(t=>t.reps&&t.reps.length);
+    let nR=0,nD=0; withReps.forEach(t=>{const s=tpStats(t);nR+=s.n;nD+=s.det;});
+    const measRate=nR?Math.round(nD/nR*100):null;
+    const an=cfg.obstacles.map(analyzeObstacle);
+    const margins=an.filter(r=>r.marginMs!=null).map(r=>r.marginMs);
+    const minMargin=margins.length?Math.min(...margins):null;
+    const worst = an.some(r=>r.cls==="FAIL"||r.cls==="NOT DETECTED")?"FAIL"
+      : an.some(r=>r.cls==="MARGINAL")?"MARGINAL"
+      : an.length?"PASS":"—";
+    return { name:cfg.project.name||"(unnamed)", side:cfg.project.doorSide,
+      sensors:cfg.sensors.length, active:cfg.sensors.filter(s=>s.active).length,
+      maxOpen:cfg.door.maxOpenDeg, tps:tps.length, pass, fail, blind, cov,
+      measRate, minMargin, worst };
+  });
+}
+
+/* ---- Coverage zones: per-zone % covered by the union of active FOVs ----
+   Coverage is evaluated in the FRONT (Y-Z) plane — the plane the door lifts in.
+   A fixed zone band is sampled on a grid; a sample counts as covered at a given
+   door position when it falls inside ANY active sensor's projected FOV polygon.
+   Because the sensors ride the door, coverage is computed at every door position
+   and reported as worst-case (the safety-relevant figure), mean, and a curve.
+   Pure: it swaps `project` via withProject so any cfg is measured identically. */
+function zoneSamplePoints(zone, side, gridMm){
+  const poly=zonePolygon(zone, side);
+  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  poly.forEach(p=>{minx=Math.min(minx,p.x);maxx=Math.max(maxx,p.x);
+    miny=Math.min(miny,p.y);maxy=Math.max(maxy,p.y);});
+  const step=Math.max(20, gridMm||60), pts=[];
+  for(let x=minx;x<=maxx+1e-6;x+=step) for(let y=miny;y<=maxy+1e-6;y+=step)
+    if(pointInPolygon({x,y},poly)) pts.push({x,y});
+  return pts;
+}
+function coverageMetrics(cfg, opts){
+  opts=opts||{};
+  return withProject(cfg, ()=>{
+    const side=cfg.project.doorSide;
+    const zones=opts.zones || cfg.zones || [];
+    const positions=(opts.positions && opts.positions.length)
+      ? opts.positions : (cfg.door.positionsPct || [0,50,100]);
+    const gridMm=Math.max(20, opts.gridMm || (cfg.overlap&&cfg.overlap.gridMm) || 60);
+    const activeSensors=cfg.sensors.filter(s=>s.active && s.showFov!==false);
+    const out={};
+    for(const z of zones){
+      const samples=zoneSamplePoints(z, side, gridMm);
+      const total=samples.length, perPos=[];
+      let sum=0, worst=total?101:0, best=0;
+      for(const pct of positions){
+        const od=doorAngleForPercent(pct,cfg.door,side);
+        const fovs=activeSensors.map(s=>sensorFovProject(s,cfg.door,od,side,"front"));
+        let covered=0;
+        for(const pt of samples)
+          if(fovs.some(f=>f.length>=3 && pointInPolygon(pt,f))) covered++;
+        const cov=total? covered/total*100 : 0;
+        perPos.push({pct, cov});
+        sum+=cov; worst=Math.min(worst,cov); best=Math.max(best,cov);
+      }
+      out[z.id]={ id:z.id, name:z.name, color:z.color, weight:z.weight||1,
+        total, gridMm, worst: total?worst:0, best,
+        mean: positions.length? sum/positions.length : 0, perPos };
+    }
+    return out;
+  });
+}
+// Weighted overall score (worst-case, zone weights) — used by Compare/Optimize.
+function coverageScore(metrics){
+  let wsum=0, acc=0;
+  for(const k in metrics){ const m=metrics[k], w=m.weight||1; wsum+=w; acc+=w*m.worst; }
+  return wsum? acc/wsum : 0;
+}
+
+/* ====================== 4. RENDERING ======================
+   Draw functions use the module-level "current target": ctx/W/H (the canvas
+   being drawn), curPlane, and curView (its zoom/pan). renderPane() points these
+   at a canvas+plane+view so one render() can draw two panes (split view). */
+const cvEl=document.getElementById("cv"), cv2El=document.getElementById("cv2");
+let cv=cvEl, ctx=cvEl.getContext("2d");
+let W=0,H=0,DPR=1, curView=null;
+// Ensure the canvas backing store matches its CSS box; return logical size.
+function fitCanvas(canvas){
+  DPR=window.devicePixelRatio||1;
+  const r=canvas.getBoundingClientRect();
+  const w=Math.max(1,Math.round(r.width)), h=Math.max(1,Math.round(r.height));
+  if(canvas.width!==w*DPR || canvas.height!==h*DPR){ canvas.width=w*DPR; canvas.height=h*DPR; }
+  return {w,h};
+}
+// Plane point p = {x:horiz, y:vert(up)} → screen, using the current target.
+function worldToScreen(p){
+  const s=curView.zoom;
+  return { x:W/2 + curView.panX + p.x*s,
+           y:H/2 + curView.panY - p.y*s };
+}
+function screenToWorld(sx,sy){
+  const s=curView.zoom;
+  return { x:(sx - W/2 - curView.panX)/s,
+           y:-(sy - H/2 - curView.panY)/s };
+}
+function polyPath(poly){
+  ctx.beginPath();
+  poly.forEach((p,i)=>{const q=worldToScreen(p); i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y);});
+  ctx.closePath();
+}
+function cssVar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+// Door/wall geometry ink at a given alpha, theme-aware (dark→near-white, light→slate).
+function geo(a){return "rgba("+cssVar("--geo-rgb")+","+a+")";}
+// Paint a canvas background: vertical gradient (top→bottom) when the theme
+// defines distinct stops (light mode's CAD-style blue→white), else a flat fill.
+function paintBg(c,w,h,gradient){
+  const top=cssVar("--canvas-bg-top"), bot=cssVar("--canvas-bg-bot");
+  if(gradient && top && bot && top!==bot){
+    const g=c.createLinearGradient(0,0,0,h);
+    g.addColorStop(0,top); g.addColorStop(1,bot); c.fillStyle=g;
+  } else { c.fillStyle=cssVar("--canvas-bg"); }
+  c.fillRect(0,0,w,h);
+}
+
+/* ---- light / dark theme ---- */
+function applyTheme(mode){
+  const light = mode==="light";
+  if(light) document.documentElement.setAttribute("data-theme","light");
+  else document.documentElement.removeAttribute("data-theme");
+  const btn=document.getElementById("themeToggle");
+  if(btn) btn.textContent = light ? "☀️ Light" : "🌙 Dark";
+  try{ localStorage.setItem("wds-theme", mode); }catch(e){}
+  // Redraw canvases so scene colours follow the theme (guarded: the app
+  // may not be fully initialised yet on first call).
+  if(window.__appReady){ try{ render(); }catch(e){} }
+}
+function toggleTheme(){
+  const isLight=document.documentElement.getAttribute("data-theme")==="light";
+  applyTheme(isLight ? "dark" : "light");
+}
+(function initTheme(){
+  let saved=null;
+  try{ saved=localStorage.getItem("wds-theme"); }catch(e){}
+  if(!saved && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) saved="light";
+  applyTheme(saved==="light" ? "light" : "dark");
+})();
+
+function drawGrid(){
+  paintBg(ctx,W,H);
+  drawHeatmap(); // coloured distance zones (click Heatmap to compute)
+  const cell=gridCellMm, major=cell*5;
+  const s=curView.zoom;
+  const originS=worldToScreen({x:0,y:0});
+  const padY=cell*4, padZ=cell*4;
+  const spanY=W/s+padY, spanZ=H/s+padZ;
+  const minX=-Math.ceil(spanY/cell)*cell, maxX=Math.ceil(spanY/cell)*cell;
+  const minZ=-Math.ceil(spanZ/cell)*cell, maxZ=Math.ceil(spanZ/cell)*cell;
+  const cellPx=cell*s; // screen pixels per cell
+
+  // minor gridlines — skip when too dense
+  if(cellPx>=3){
+    ctx.strokeStyle=cssVar("--grid-minor"); ctx.lineWidth=0.5;
+    ctx.beginPath();
+    for(let gy=minX; gy<=maxX; gy+=cell){
+      const a=worldToScreen({x:gy,y:minZ}), b=worldToScreen({x:gy,y:maxZ});
+      ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+    }
+    for(let gz=minZ; gz<=maxZ; gz+=cell){
+      const a=worldToScreen({x:minX,y:gz}), b=worldToScreen({x:maxX,y:gz});
+      ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+    }
+    ctx.stroke();
+  }
+
+  // major gridlines (every 5 cells)
+  ctx.strokeStyle=cssVar("--grid-major"); ctx.lineWidth=1;
+  ctx.beginPath();
+  for(let gy=-Math.ceil(spanY/major)*major; gy<=Math.ceil(spanY/major)*major; gy+=major){
+    const a=worldToScreen({x:gy,y:minZ}), b=worldToScreen({x:gy,y:maxZ});
+    ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+  }
+  for(let gz=-Math.ceil(spanZ/major)*major; gz<=Math.ceil(spanZ/major)*major; gz+=major){
+    const a=worldToScreen({x:minX,y:gz}), b=worldToScreen({x:maxX,y:gz});
+    ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+  }
+  ctx.stroke();
+
+  // Pick label step: smallest "nice" mm interval where labels are >= 40 px apart
+  const niceSteps=[100,200,500,1000,2000,5000];
+  let lblStep=niceSteps[niceSteps.length-1];
+  for(const ns of niceSteps){ if(ns*s>=40){ lblStep=ns; break; } }
+  const cmFmt=v=>{
+    if(Math.abs(v)>=1000) return (v/1000).toFixed(v%1000===0?0:1)+"m";
+    return Math.round(v/10)+"cm";
+  };
+  ctx.fillStyle=cssVar("--muted"); ctx.font="10px sans-serif";
+  ctx.textAlign="center";
+  for(let gy=-Math.ceil(spanY/lblStep)*lblStep; gy<=Math.ceil(spanY/lblStep)*lblStep; gy+=lblStep){
+    if(gy===0) continue;
+    const q=worldToScreen({x:gy,y:0});
+    if(q.x<2||q.x>W-2) continue;
+    ctx.fillText(cmFmt(gy), q.x, Math.min(H-4, Math.max(14, q.y-4)));
+  }
+  ctx.textAlign="right";
+  for(let gz=-Math.ceil(spanZ/lblStep)*lblStep; gz<=Math.ceil(spanZ/lblStep)*lblStep; gz+=lblStep){
+    if(gz===0) continue;
+    const q=worldToScreen({x:0,y:gz});
+    if(q.y<10||q.y>H-2) continue;
+    ctx.fillText(cmFmt(gz), 44, q.y+3);
+  }
+
+  const top=curPlane==="top";
+  if(!top){ // ground line at Z=0 (front view only)
+    ctx.strokeStyle=cssVar("--ground"); ctx.lineWidth=1.5; ctx.beginPath();
+    const g0=worldToScreen({x:minX,y:0}), g1=worldToScreen({x:maxX,y:0});
+    ctx.moveTo(g0.x,g0.y); ctx.lineTo(g1.x,g1.y); ctx.stroke();
+    ctx.fillStyle=cssVar("--muted"); ctx.font="11px sans-serif"; ctx.textAlign="left";
+    ctx.fillText("ground  Z=0", g1.x-90, g1.y-5);
+  }
+  // axes
+  ctx.strokeStyle=cssVar("--axis"); ctx.lineWidth=1.5; ctx.beginPath();
+  const ah=worldToScreen({x:2500,y:0}), ah0=worldToScreen({x:-2500,y:0});
+  const av=worldToScreen({x:0,y:2500}), av0=worldToScreen({x:0,y:-200});
+  ctx.moveTo(ah0.x,ah0.y); ctx.lineTo(ah.x,ah.y);
+  ctx.moveTo(av0.x,av0.y); ctx.lineTo(av.x,av.y); ctx.stroke();
+  ctx.fillStyle=cssVar("--muted"); ctx.font="11px sans-serif"; ctx.textAlign="left";
+  ctx.fillText(top?"+X fwd":"+Y", ah.x-6, ah.y-6);
+  ctx.fillText(top?"+Y left":"+Z up", av.x+6, av.y+4);
+  ctx.beginPath(); ctx.arc(originS.x,originS.y,3,0,7); ctx.fill();
+  if(top){
+    ctx.font="bold 12px sans-serif"; ctx.textAlign="center";
+    ctx.fillStyle=cssVar("--accent");
+    ctx.fillText("FRONT ▸", ah.x, ah.y+14);
+    ctx.fillText("◂ REAR", ah0.x, ah0.y+14);
+  }
+}
+function setGridCell(mm){
+  gridCellMm=mm;
+  [100,50,200].forEach(v=>{
+    const b=document.getElementById("gridBtn"+v);
+    if(b){ b.classList.toggle("primary",v===mm); }
+  });
+  render();
+}
+function fillPoly(poly,fill,stroke,lw){
+  polyPath(poly);
+  if(fill){ctx.fillStyle=fill;ctx.fill();}
+  if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=lw||1.5;ctx.stroke();}
+}
+// Plane-aware door outline (front polygon or top footprint).
+function drawDoor(openDeg,side,style){
+  const poly = curPlane==="top"
+    ? doorFootprintTop(project.door,openDeg,side)
+    : doorPolygonAtAngle(project.door,openDeg,side);
+  fillPoly(poly, style.fill, style.stroke, style.lw);
+}
+function drawHinge(){
+  const d=project.door;
+  const q=worldToScreen(toPlane({x:d.hingeX,y:d.hingeY,z:d.hingeZ}));
+  ctx.fillStyle="#fff"; ctx.strokeStyle="#000";
+  ctx.beginPath(); ctx.arc(q.x,q.y,5,0,7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle=cssVar("--muted"); ctx.font="11px sans-serif";
+  ctx.fillText("hinge (roof)", q.x+8, q.y-6);
+}
+// Draw a single sensor's FOV at a given opening angle (plane-aware).
+function sensorColor(s){ return s.color||"#4da3ff"; }
+function drawSensorFov(s,openDeg,side,fill,stroke,lw,showSurfaceGuide=true){
+  if(s.showFov===false) return;
+  const plane=curPlane==="top"?"top":"front";
+  const poly = sensorFovProject(s,project.door,openDeg,side,plane);
+  fillPoly(poly,fill,stroke,lw);
+  // Project the matching horizontal/vertical spherical-cap section from the
+  // 3D geometry. This makes the rounded range boundary explicit in both 2D views.
+  if(showSurfaceGuide){
+    const g=sensorConeGeom(s,project.door,openDeg,side,72);
+    const line=g.crossLines[plane==="top"?0:1];
+    ctx.beginPath(); line.forEach((q,i)=>{ const p=worldToScreen(plane==="top"?{x:q.x,y:q.y}:{x:q.y,y:q.z});
+      i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y); });
+    ctx.strokeStyle=sensorColor(s)+"cc"; ctx.lineWidth=Math.max(1,lw||1); ctx.stroke();
+  }
+}
+function drawSensor(s,openDeg,side){
+  if(!s.active) return;
+  const c=sensorColor(s);
+  const cFill=c+"29", cEdge=c+"a6"; // ~16% and ~65% alpha
+  drawSensorFov(s,openDeg,side,cFill,cEdge,1.2);
+  const pose=sensorPoseAtAngle(s,project.door,openDeg,side); // pose.x=Y, pose.y=Z
+  const top=curPlane==="top";
+  const anchor = top ? {x:project.door.hingeX+s.posX, y:pose.x} : {x:pose.x, y:pose.y};
+  const p=worldToScreen(anchor);
+  const fa = top ? sensorTopAngle(s, pose) : beamProject(pose.facing, s.pitchDeg, "front").angle;
+  const tip=worldToScreen({x:anchor.x+Math.cos(fa)*400, y:anchor.y+Math.sin(fa)*400});
+  ctx.strokeStyle=c; ctx.lineWidth=2; ctx.beginPath();
+  ctx.moveTo(p.x,p.y); ctx.lineTo(tip.x,tip.y); ctx.stroke();
+  ctx.fillStyle=c;
+  ctx.beginPath(); ctx.arc(p.x,p.y,4,0,7); ctx.fill();
+  ctx.fillStyle=cssVar("--ink"); ctx.font="11px sans-serif";
+  ctx.fillText(s.id, p.x+7, p.y-7);
+}
+function drawObstacles(){
+  const s=curView.zoom;
+  const top=curPlane==="top";
+  for(const o of project.obstacles){
+    // o.z = bottom of obstacle; display center is at z + height/2 in front view
+    const dispZ = o.z + (o.height||1000)/2;
+    const ctr=worldToScreen(toPlane({x:o.x,y:o.y,z:dispZ}));
+    const preset=OBSTACLE_PRESETS[o.type]||OBSTACLE_PRESETS["Custom obstacle"];
+    const shape=preset.shape;
+    // Top view:   horizontal=X(depth), vertical=Y(width)
+    // Front view: horizontal=Y(width),  vertical=Z(height)
+    const hw=Math.max(4,(top?(o.depth||200):(o.width||60))/2*s);
+    const hh=Math.max(4,(top?(o.width||60):(o.height||1000))/2*s);
+    ctx.fillStyle="rgba(255,152,0,.25)";
+    ctx.strokeStyle=cssVar("--orange"); ctx.lineWidth=1.5;
+    if(shape==="circle"){
+      ctx.beginPath(); ctx.arc(ctr.x,ctr.y,hw,0,Math.PI*2);
+      ctx.fill(); ctx.stroke();
+      if(curPlane!=="top"){
+        ctx.beginPath();
+        ctx.moveTo(ctr.x,ctr.y-hh); ctx.lineTo(ctr.x,ctr.y+hh);
+        ctx.stroke();
+      }
+    } else if(shape==="diamond"){
+      ctx.beginPath();
+      ctx.moveTo(ctr.x,      ctr.y-hh);
+      ctx.lineTo(ctr.x+hw,   ctr.y);
+      ctx.lineTo(ctr.x,      ctr.y+hh);
+      ctx.lineTo(ctr.x-hw,   ctr.y);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    } else if(shape==="human"){
+      if(top){
+        // Top view: oval footprint
+        ctx.beginPath(); ctx.ellipse(ctr.x,ctr.y,hw,hh,0,0,Math.PI*2);
+        ctx.fill(); ctx.stroke();
+      } else {
+        // Front view: head circle + torso rect + two leg lines
+        const headR=Math.max(3, hh*0.13);
+        const headCy=ctr.y-hh+headR;
+        const torsoHW=hw*0.65, torsoBot=ctr.y+hh*0.35;
+        // head
+        ctx.beginPath(); ctx.arc(ctr.x,headCy,headR,0,Math.PI*2);
+        ctx.fill(); ctx.stroke();
+        // torso
+        ctx.fillRect(ctr.x-torsoHW, headCy+headR, torsoHW*2, torsoBot-(headCy+headR));
+        ctx.strokeRect(ctr.x-torsoHW, headCy+headR, torsoHW*2, torsoBot-(headCy+headR));
+        // legs
+        ctx.beginPath();
+        ctx.moveTo(ctr.x-torsoHW*0.4, torsoBot); ctx.lineTo(ctr.x-torsoHW*0.4, ctr.y+hh);
+        ctx.moveTo(ctr.x+torsoHW*0.4, torsoBot); ctx.lineTo(ctr.x+torsoHW*0.4, ctr.y+hh);
+        ctx.stroke();
+      }
+    } else { // rect (default)
+      ctx.fillRect(ctr.x-hw, ctr.y-hh, hw*2, hh*2);
+      ctx.strokeRect(ctr.x-hw, ctr.y-hh, hw*2, hh*2);
+    }
+    ctx.fillStyle=cssVar("--orange"); ctx.font="11px sans-serif"; ctx.textAlign="left";
+    ctx.fillText(o.id+" ("+o.type+")", ctr.x+hw+4, ctr.y);
+    // highlight ring when this obstacle is selected in Move mode
+    const isMoveSelected=$("moveObs")?.checked && $("moveObsSel")?.value===o.id;
+    if(isMoveSelected){
+      ctx.strokeStyle=cssVar("--ink"); ctx.lineWidth=2.5;
+      const pad=6;
+      if(shape==="circle"||shape==="human"){
+        ctx.beginPath(); ctx.ellipse(ctr.x,ctr.y,hw+pad,hh+pad,0,0,Math.PI*2); ctx.stroke();
+      } else if(shape==="diamond"){
+        ctx.beginPath();
+        ctx.moveTo(ctr.x,          ctr.y-(hh+pad));
+        ctx.lineTo(ctr.x+(hw+pad), ctr.y);
+        ctx.lineTo(ctr.x,          ctr.y+(hh+pad));
+        ctx.lineTo(ctr.x-(hw+pad), ctr.y);
+        ctx.closePath(); ctx.stroke();
+      } else {
+        ctx.strokeRect(ctr.x-(hw+pad), ctr.y-(hh+pad), (hw+pad)*2, (hh+pad)*2);
+      }
+    }
+  }
+}
+function drawTestPoints(){
+  for(const tp of project.testPoints){
+    const q=worldToScreen(toPlane({x:tp.x,y:tp.y,z:tp.z}));
+    const col = tp.result==="PASS"?cssVar("--green")
+      : tp.result==="FAIL"?cssVar("--red")
+      : tp.result==="CONDITIONAL PASS"?cssVar("--yellow")
+      : cssVar("--gray");
+    ctx.beginPath(); ctx.arc(q.x,q.y,5,0,7);
+    ctx.fillStyle=col; ctx.fill();
+    if(tp.blind){ ctx.strokeStyle=cssVar("--red"); ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(q.x,q.y,8,0,7); ctx.stroke(); }
+    if($("showTpIds")&&$("showTpIds").checked){
+      ctx.fillStyle=cssVar("--fg"); ctx.font="10px sans-serif";
+      ctx.fillText(tp.displayId||tp.id,q.x+7,q.y+3);
+    }
+  }
+}
+function drawProximityLines(){
+  if(!project||!project.sensors||!project.obstacles) return;
+  if($("showProxLines") && !$("showProxLines").checked) return;
+  const side=project.project.doorSide;
+  const openDeg=doorAngleForPercent(project.view.doorPct,project.door,side);
+  for(const s of project.sensors){
+    if(!s.active) continue;
+    const sw=sensorWorldPos(s,openDeg,side);
+    const sp=worldToScreen(toPlane(sw));
+    for(const o of project.obstacles){
+      const b=obsAABB(o);
+      const cx=clampBox(sw.x,b.x1,b.x2);
+      const cy=clampBox(sw.y,b.y1,b.y2);
+      const cz=clampBox(sw.z,b.z1,b.z2);
+      const dx=sw.x-cx, dy=sw.y-cy, dz=sw.z-cz;
+      const dist=Math.sqrt(dx*dx+dy*dy+dz*dz);
+      const col=dist<=(s.stopMm||300)?"rgba(220,50,50,0.9)":
+                dist<=(s.warningMm||800)?"rgba(230,200,0,0.9)":
+                "rgba(30,185,90,0.9)";
+      const ep=worldToScreen(toPlane({x:cx,y:cy,z:cz}));
+      ctx.save();
+      ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);
+      ctx.beginPath(); ctx.moveTo(sp.x,sp.y); ctx.lineTo(ep.x,ep.y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle=col;
+      ctx.beginPath(); ctx.arc(ep.x,ep.y,4,0,Math.PI*2); ctx.fill();
+      const mx=(sp.x+ep.x)/2, my=(sp.y+ep.y)/2;
+      const label=`${s.id}→${o.id}: ${Math.round(dist)}mm`;
+      ctx.font="11px sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+      const tw=ctx.measureText(label).width;
+      ctx.fillStyle="rgba(13,17,23,0.75)";
+      ctx.fillRect(mx-tw/2-3,my-8,tw+6,16);
+      ctx.fillStyle=col; ctx.fillText(label,mx,my);
+      ctx.restore();
+    }
+  }
+}
+// Dispatch: draw the active view (front/top) or both panes (split).
+function render(){
+  if(!project) return;
+  updateDistPanel();
+  if($("cam3dGroup")) $("cam3dGroup").style.display = project.view.plane==="3d" ? "inline-flex" : "none";
+  const plane=project.view.plane;
+  if(plane==="split"){
+    $("pane2").style.display="block";
+    $("cvLabel").textContent="Front (Y–Z)"; $("cv2Label").textContent="Top (X–Y)";
+    renderPane(cvEl, "front", project.viewFront);
+    renderPane(cv2El, "top", project.viewTop);
+  } else if(plane==="3d"){
+    $("pane2").style.display="none"; $("cvLabel").textContent="3D  ·  drag = rotate · right/shift-drag = pan · wheel = zoom";
+    const d=fitCanvas(cvEl); cv=cvEl; ctx=cvEl.getContext("2d"); W=d.w; H=d.h;
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    draw3DScene();
+  } else {
+    $("pane2").style.display="none";
+    $("cvLabel").textContent = plane==="top" ? "Top (X–Y)" : "Front (Y–Z)";
+    renderPane(cvEl, plane, plane==="top"?project.viewTop:project.viewFront);
+  }
+}
+// Point the render target at a canvas+plane+view, then draw the scene.
+function renderPane(canvas, plane, view){
+  const d=fitCanvas(canvas);
+  cv=canvas; ctx=canvas.getContext("2d"); W=d.w; H=d.h;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  curPlane=plane; curView=view;
+  drawScene();
+}
+function drawScene(){
+  const side=project.project.doorSide;
+  const openDeg=doorAngleForPercent(project.view.doorPct,project.door,side);
+  drawGrid();
+  if($("showSwept").checked){
+    fillPoly(sweptEnvelopePlane(),
+      "rgba(163,113,247,.10)","rgba(163,113,247,.5)",1);
+  }
+  // Swept-FOV "feathers": door + FOV at every position (faded).
+  if($("showGhost").checked){
+    for(const pct of project.door.positionsPct){
+      const od=doorAngleForPercent(pct,project.door,side);
+      drawDoor(od,side,{stroke:geo(.18),lw:1});
+      project.sensors.forEach(s=>{ if(s.active){
+        const c=sensorColor(s);
+        drawSensorFov(s,od,side,c+"0d",c+"2e",1,false); } });
+    }
+  }
+  // Measured FOV boundary from PASS points (§9.2), front plane only.
+  if(curPlane==="front" && $("showMeasured").checked){
+    const hull=measuredFovHull();
+    if(hull) fillPoly(hull,"rgba(57,211,83,.10)","rgba(57,211,83,.7)",1.5);
+  }
+  drawDoor(openDeg,side,{fill:geo(.12),stroke:geo(.95),lw:2});
+  drawHinge();
+  project.sensors.forEach(s=>drawSensor(s,openDeg,side));
+  drawRegions();
+  drawZones();
+  drawCompareOverlay();
+  drawObstacles();
+  drawProximityLines();
+  drawTestPoints();
+}
+
+/* ====================== 4b. 3D VIEW (§17.2) ======================
+   Hand-rolled orbit camera (no library). World X fwd, Y left, Z up.
+   Camera basis: w = forward (camera→target), u = screen-right, v = screen-up;
+   trackball rotation about camera-local axes (pole-free), screen-space pan,
+   zoom-to-cursor — replicating the STEP viewer's OrbitControls feel. Faces are
+   painter-sorted by depth for a readable wireframe. */
+const V={ add:(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],
+  sub:(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],
+  dot:(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],
+  cross:(a,b)=>[a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]],
+  scale:(a,s)=>[a[0]*s,a[1]*s,a[2]*s],
+  len:a=>Math.hypot(a[0],a[1],a[2]),
+  norm:a=>{const l=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/l,a[1]/l,a[2]/l];},
+  // Rodrigues: rotate vector a about unit axis k by angle t
+  rot:(a,k,t)=>{const c=Math.cos(t),s=Math.sin(t);
+    const kd=k[0]*a[0]+k[1]*a[1]+k[2]*a[2], cr=V.cross(k,a);
+    return [a[0]*c+cr[0]*s+k[0]*kd*(1-c), a[1]*c+cr[1]*s+k[1]*kd*(1-c), a[2]*c+cr[2]*s+k[2]*kd*(1-c)];} };
+// Spherical orbit about a FIXED world-up (Z) — like OrbitControls: no roll.
+// az = azimuth around Z, polar = angle from +Z. Basis derived each render.
+function default3dCam(){ return { target:[0,-600,900], dist:5200, az:-0.9, polar:0.95 }; }
+function cam3f(){ return 0.95*Math.min(W,H); }
+function cam3Basis(){
+  const v=project.view3d, ph=Math.max(0.02,Math.min(Math.PI-0.02, v.polar)), th=v.az;
+  const dir=[Math.sin(ph)*Math.cos(th), Math.sin(ph)*Math.sin(th), Math.cos(ph)]; // target→eye
+  const w=V.norm(V.scale(dir,-1));                    // forward (eye→target)
+  let u=V.cross(w,[0,0,1]); if(V.len(u)<1e-6) u=[1,0,0]; u=V.norm(u); // right (world-up fixed)
+  const vv=V.norm(V.cross(u,w));                      // up
+  return {u, v:vv, w};
+}
+let cur3B=null; // camera basis for the current 3D render pass (set by draw3DScene)
+function project3D(p){
+  const v=project.view3d, t=v.target, b=cur3B||(cur3B=cam3Basis());
+  const rel=[p.x-t[0], p.y-t[1], p.z-t[2]];
+  const cx=V.dot(rel,b.u), cy=V.dot(rel,b.v), depth=V.dot(rel,b.w)+v.dist;
+  const s=cam3f()/Math.max(50,depth);
+  return { x:W/2 + cx*s, y:H/2 - cy*s, depth };
+}
+function set3dPreset(name){
+  const v=project.view3d;
+  if(name==="iso")  { v.az=-0.9; v.polar=0.95; }
+  if(name==="front"){ v.az=Math.PI;   v.polar=Math.PI/2; } // look along −X: Y horiz, Z up
+  if(name==="side") { v.az=-Math.PI/2;v.polar=Math.PI/2; } // look along −Y
+  if(name==="top")  { v.az=-Math.PI/2;v.polar=0.03; }      // look straight down
+  orbitVel.az=0; orbitVel.polar=0; fit3d(false); start3dLoop();
+}
+// Frame the whole scene: target=bbox center, dist so it fills ~85%.
+function fit3d(resetDir){
+  const v=project.view3d, side=project.project.doorSide, d=project.door;
+  const pts=[];
+  for(const pct of d.positionsPct){ const od=doorAngleForPercent(pct,d,side);
+    const L=(d.lengthMm||1000)/2;
+    doorPolygonAtAngle(d,od,side).forEach(p=>{ pts.push([d.hingeX-L,p.x,p.y]); pts.push([d.hingeX+L,p.x,p.y]); }); }
+  project.obstacles.forEach(o=>pts.push([o.x,o.y,o.z]));
+  project.testPoints.forEach(tp=>pts.push([tp.x,tp.y,tp.z]));
+  project.sensors.forEach(s=>{ if(s.active){ const po=sensorPoseAtAngle(s,d,doorAngleForPercent(project.view.doorPct,d,side),side);
+    pts.push([d.hingeX+s.posX, po.x, po.y]); } });
+  if(!pts.length) pts.push([0,0,0]);
+  const lo=[1e9,1e9,1e9], hi=[-1e9,-1e9,-1e9];
+  pts.forEach(p=>{ for(let i=0;i<3;i++){ lo[i]=Math.min(lo[i],p[i]); hi[i]=Math.max(hi[i],p[i]); } });
+  v.target=[(lo[0]+hi[0])/2,(lo[1]+hi[1])/2,(lo[2]+hi[2])/2];
+  const maxD=Math.max(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2],500);
+  const fovV=2*Math.atan(0.5*Math.min(W||800,H||600)/cam3f());
+  v.dist=Math.max(800, (maxD/2)/Math.tan(Math.max(0.2,fovV/2))*1.9);
+  if(resetDir){ v.az=-0.9; v.polar=0.95; }
+}
+function line3(a,b,stroke,lw){ const pa=project3D(a),pb=project3D(b);
+  ctx.strokeStyle=stroke; ctx.lineWidth=lw||1; ctx.beginPath();
+  ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke(); }
+function face3(pts3, fill, stroke, lw){ // returns {avgDepth} for sorting
+  let d=0; ctx.beginPath();
+  pts3.forEach((p,i)=>{ const q=project3D(p); d+=q.depth; i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y); });
+  ctx.closePath();
+  if(fill){ctx.fillStyle=fill;ctx.fill();}
+  if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=lw||1;ctx.stroke();}
+  return d/pts3.length;
+}
+function dot3(p,r,fill){ const q=project3D(p); ctx.beginPath(); ctx.arc(q.x,q.y,r,0,7);
+  ctx.fillStyle=fill; ctx.fill(); return q; }
+
+/* ---- Door photo: texture-mapped onto the door in the 3D view ---- */
+let doorImgEl=null, doorImgSrc=null;
+// Load (once) the door image referenced by the project; returns it when ready.
+function ensureDoorImg(){
+  const src=project.door.image && project.door.image.src;
+  if(!src){ doorImgEl=null; doorImgSrc=null; return null; }
+  if(src!==doorImgSrc){
+    doorImgSrc=src; doorImgEl=new Image();
+    doorImgEl.onload=()=>{ if(project.view.plane==="3d") render(); };
+    doorImgEl.src=src;
+  }
+  return (doorImgEl && doorImgEl.complete && doorImgEl.naturalWidth>0) ? doorImgEl : null;
+}
+// Affine-map one source triangle of the image onto a destination screen triangle.
+function drawTexTri(img, s, d){
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(d[0].x,d[0].y); ctx.lineTo(d[1].x,d[1].y); ctx.lineTo(d[2].x,d[2].y);
+  ctx.closePath(); ctx.clip();
+  const u0=s[0].x,v0=s[0].y,u1=s[1].x,v1=s[1].y,u2=s[2].x,v2=s[2].y;
+  const x0=d[0].x,y0=d[0].y,x1=d[1].x,y1=d[1].y,x2=d[2].x,y2=d[2].y;
+  const det=(u1-u0)*(v2-v0)-(u2-u0)*(v1-v0);
+  if(Math.abs(det)>1e-6){
+    const a=((x1-x0)*(v2-v0)-(x2-x0)*(v1-v0))/det;
+    const c=((x2-x0)*(u1-u0)-(x1-x0)*(u2-u0))/det;
+    const e=x0-a*u0-c*v0;
+    const b=((y1-y0)*(v2-v0)-(y2-y0)*(v1-v0))/det;
+    const dd=((y2-y0)*(u1-u0)-(y1-y0)*(u2-u0))/det;
+    const f=y0-b*u0-dd*v0;
+    ctx.transform(a,b,c,dd,e,f);          // composes with the DPR transform
+    ctx.drawImage(img,0,0);
+  }
+  ctx.restore();
+}
+// Draw a textured quad face (from doorImageFaces): two triangles, apex order Pa,Pb,Pc,Pd.
+function drawTexQuad(fc){
+  const d=fc.pts.map(project3D), t=fc.tex, s=t.s;
+  const prev=ctx.globalAlpha; ctx.globalAlpha=prev*(t.op!=null?t.op:1);
+  drawTexTri(t.img, [s[0],s[1],s[2]], [d[0],d[1],d[2]]);
+  drawTexTri(t.img, [s[0],s[2],s[3]], [d[0],d[2],d[3]]);
+  ctx.globalAlpha=prev;
+  if(t.sourcePlane){ ctx.beginPath(); d.forEach((q,i)=>i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y));
+    ctx.closePath(); ctx.strokeStyle=cssVar("--accent"); ctx.lineWidth=1.5; ctx.stroke(); }
+}
+// Y intersections of the door section at a world Z height. The lateral-most
+// intersection is the outer surface hit by an orthographic projection from ZX.
+function doorSectionYAtZ(prof,z){
+  const ys=[];
+  for(let i=0;i<prof.length;i++){ const a=prof[i],b=prof[(i+1)%prof.length];
+    if((a.y<=z&&b.y>z)||(b.y<=z&&a.y>z)){
+      const t=(z-a.y)/(b.y-a.y); ys.push(a.x+t*(b.x-a.x)); }
+  }
+  return ys;
+}
+function isOuterDoorEdge(prof,i,side){
+  const a=prof[i],b=prof[(i+1)%prof.length], z=(a.y+b.y)/2;
+  const ys=doorSectionYAtZ(prof,z); if(!ys.length) return false;
+  const outer=side==="RH"?Math.max(...ys):Math.min(...ys);
+  return Math.abs((a.x+b.x)/2-outer)<1;
+}
+// Keep the original ZX reference image and its orthographic projection onto
+// the door's outboard skin. Source shifts move the reference plane image;
+// projection shifts then offset only the copy registered on the door.
+function doorImageFaces(door, openDeg, side){
+  const img=ensureDoorImg(); if(!img) return [];
+  const prof=doorPolygonAtAngle(door, openDeg, side); // [{x:Y,y:Z}...] at this angle
+  if(prof.length<2) return [];
+  const cfg=door.image||{}, L=door.lengthMm||1000, H=Math.max(1,door.heightMm||1250);
+  const sx=cfg.sourceX||0, sz=cfg.sourceZ||0, px=cfg.projectX||0, pz=cfg.projectZ||0;
+  const srcCx=door.hingeX+sx, srcCz=door.hingeZ-H/2+sz;
+  const srcX0=srcCx-L/2, srcX1=srcCx+L/2, srcZ0=srcCz-H/2, srcZ1=srcCz+H/2;
+  const projCx=srcCx+px, projX0=projCx-L/2;
+  // Projection registration is stored in door-local Z. The texture therefore
+  // rotates with the panel instead of being re-projected in world Z every frame.
+  const projZTopLocal=sz+pz;
+  const x0=door.hingeX-L/2, x1=door.hingeX+L/2;
+  const iw=img.naturalWidth, ih=img.naturalHeight;
+  const op=cfg.opacity!=null?cfg.opacity:1;
+  const sourceS=cfg.flipX
+    ? [{x:iw,y:0},{x:0,y:0},{x:0,y:ih},{x:iw,y:ih}]
+    : [{x:0,y:0},{x:iw,y:0},{x:iw,y:ih},{x:0,y:ih}];
+  const faces=[];
+  if(cfg.showSource!==false) faces.push({
+    pts:[{x:srcX0,y:door.hingeY,z:srcZ1},{x:srcX1,y:door.hingeY,z:srcZ1},
+      {x:srcX1,y:door.hingeY,z:srcZ0},{x:srcX0,y:door.hingeY,z:srcZ0}],
+    tex:{img,op,sourcePlane:true,s:sourceS}});
+  const uv=(x,localZ)=>{ let u=(x-projX0)/L*iw; if(cfg.flipX) u=iw-u;
+    return {x:u,y:(projZTopLocal-localZ)/H*ih}; };
+  for(let i=0;i<prof.length;i++){
+    if(!isOuterDoorEdge(prof,i,side)) continue;
+    const j=(i+1)%prof.length;
+    const Pa={x:x0,y:prof[i].x,z:prof[i].y}, Pb={x:x1,y:prof[i].x,z:prof[i].y};
+    const Pc={x:x1,y:prof[j].x,z:prof[j].y}, Pd={x:x0,y:prof[j].x,z:prof[j].y};
+    faces.push({ pts:[Pa,Pb,Pc,Pd],
+      tex:{img,op,s:[uv(x0,door.profile[i].z),uv(x1,door.profile[i].z),
+        uv(x1,door.profile[j].z),uv(x0,door.profile[j].z)]} });
+  }
+  return faces;
+}
+// Door prism = front silhouette (Y,Z) extruded along X by door length.
+function doorPrismFaces(openDeg,side){
+  const prof=doorPolygonAtAngle(project.door,openDeg,side); // {x:Y,y:Z}
+  const L=project.door.lengthMm||1000, x0=project.door.hingeX-L/2, x1=project.door.hingeX+L/2;
+  const faces=[];
+  const end0=prof.map(p=>({x:x0,y:p.x,z:p.y})), end1=prof.map(p=>({x:x1,y:p.x,z:p.y}));
+  faces.push({pts:end0, fill:geo(.10), stroke:geo(.55), lw:1});
+  faces.push({pts:end1, fill:geo(.10), stroke:geo(.55), lw:1});
+  for(let i=0;i<prof.length;i++){ const j=(i+1)%prof.length;
+    faces.push({pts:[end0[i],end0[j],end1[j],end1[i]],
+      fill:geo(.07), stroke:geo(.30), lw:1}); }
+  return faces;
+}
+// Elliptical FOV cone geometry in 3D world coords (X,Y,Z): hFOV half-angle
+// spreads fore-aft (X), vFOV half-angle in the Y-Z plane. Every point on a
+// range surface is the same radial distance from the sensor, producing a
+// rounded spherical-sector volume instead of a flat-ended projection.
+// Single source of truth for the 3D render and every 2D projection/detection.
+function sensorConeGeom(s, door, openDeg, side, N){
+  N=N||36;
+  const pose=sensorPoseAtAngle(s, door, openDeg, side); // pose.x=Y, pose.y=Z, facing
+  const apex={x:door.hingeX+s.posX, y:pose.x, z:pose.y};
+  const f=pose.facing;
+  // Pitch rotates beam axis toward +X (positive = forward); keeps vx in Y-Z plane
+  const p=deg2rad(s.pitchDeg||0), cp=Math.cos(p), sp=Math.sin(p);
+  const ax=[sp,            Math.cos(f)*cp, Math.sin(f)*cp];  // beam axis (yaw + pitch)
+  const hx=[cp,           -Math.cos(f)*sp,-Math.sin(f)*sp];  // fore-aft spread axis
+  const vx=[0,            -Math.sin(f),    Math.cos(f)    ];  // elevation spread axis
+  const th=Math.tan(deg2rad(s.hFovDeg/2)), tv=Math.tan(deg2rad(s.vFovDeg/2));
+  const point=(R,u,v)=>{ const dir=V.norm([
+    ax[0]+th*u*hx[0]+tv*v*vx[0], ax[1]+th*u*hx[1]+tv*v*vx[1],
+    ax[2]+th*u*hx[2]+tv*v*vx[2]]);
+    return {x:apex.x+R*dir[0],y:apex.y+R*dir[1],z:apex.z+R*dir[2]}; };
+  const ring=(R,rho=1)=>{ const out=[]; for(let i=0;i<N;i++){ const t=2*Math.PI*i/N;
+    out.push(point(R,rho*Math.cos(t),rho*Math.sin(t))); } return out; };
+  const maxR=Math.max(1,s.maxRangeMm||1), minR=Math.max(0,Math.min(s.minRangeMm||0,maxR));
+  const outerRings=[]; for(let j=0;j<=5;j++) outerRings.push(ring(maxR,j/5));
+  const crossSteps=Math.max(36,N);
+  const cross=(horizontal)=>{ const out=[]; for(let i=0;i<=crossSteps;i++){
+    const q=-1+2*i/crossSteps; out.push(point(maxR,horizontal?q:0,horizontal?0:q)); } return out; };
+  return { apex, axis:ax, far:outerRings[5], near:minR>1 ? ring(minR) : null,
+    outerRings, crossLines:[cross(true),cross(false)],
+    axisEnd:point(maxR,0,0), N };
+}
+// True 2D silhouette of the FOV cone: convex hull of the apex + far cap
+// projected into a view plane ("top" -> X-Y, else front -> Y-Z). This is the
+// same shape used for drawing and for detection, so all views agree.
+function sensorFovProject(s, door, openDeg, side, plane){
+  // High-density sampling projects the exact spherical-sector geometry used by
+  // the 3D view. Include the near ring (rather than the apex) for sensors with
+  // a minimum range so the 2D silhouette also represents the blind zone.
+  const g=sensorConeGeom(s, door, openDeg, side, 96);
+  const pr = plane==="top" ? q=>({x:q.x,y:q.y}) : q=>({x:q.y,y:q.z});
+  const pts=[];
+  if(g.near) for(const q of g.near) pts.push(pr(q)); else pts.push(pr(g.apex));
+  for(const q of g.far) pts.push(pr(q));
+  return convexHull(pts);
+}
+function sensorConeFaces(s,openDeg,side){
+  const {apex, axisEnd, far, near, outerRings, crossLines, N}=sensorConeGeom(s, project.door, openDeg, side, 36);
+  const faces=[];
+  const c=sensorColor(s);
+  const fill=c+"16", edge=c+"32", edgeFar=c+"b8";
+  const capFill=c+"24"; // overlapping facets shade the rounded outer surface
+  if(s.showFov===false) return {faces:[], apex, axisEnd, crossLines:[]};
+  if(near){
+    for(let i=0;i<N;i++){ const j=(i+1)%N;
+      faces.push({pts:[near[i],near[j],far[j],far[i]], fill, stroke:edge, lw:1}); }
+    faces.push({pts:near, fill, stroke:edgeFar, lw:1});
+  } else {
+    for(let i=0;i<N;i++){ const j=(i+1)%N;
+      faces.push({pts:[apex,far[i],far[j]], fill, stroke:edge, lw:1}); }
+  }
+  // Tessellate the spherical outer cap in concentric rings. All vertices remain
+  // exactly maxRangeMm from the sensor while the facets suggest its curvature.
+  for(let r=0;r<outerRings.length-1;r++){
+    const a=outerRings[r], b=outerRings[r+1];
+    for(let i=0;i<N;i++){ const j=(i+1)%N;
+      faces.push({pts:[a[i],a[j],b[j],b[i]],fill:capFill,stroke:c+"18",lw:.45}); }
+  }
+  return {faces, apex, axisEnd, crossLines};
+}
+// Clip a 3D polygon against the ground half-space. Intersections are inserted
+// on z=0, so cone sides and the rounded cap terminate cleanly at the floor.
+function clipPolyAboveGround(pts){
+  const out=[];
+  for(let i=0;i<pts.length;i++){
+    const a=pts[i], b=pts[(i+1)%pts.length], ain=a.z>=0, bin=b.z>=0;
+    if(ain) out.push(a);
+    if(ain!==bin){ const t=(0-a.z)/(b.z-a.z);
+      out.push({x:a.x+t*(b.x-a.x),y:a.y+t*(b.y-a.y),z:0}); }
+  }
+  return out;
+}
+function clipFovFacesAboveGround(faces){
+  const out=[];
+  for(const face of faces){ const pts=clipPolyAboveGround(face.pts);
+    if(pts.length>=3) out.push({...face,pts}); }
+  return out;
+}
+function fovGroundClipEnabled(){
+  const el=$("clipFovGround3d"); return !!(el&&el.checked);
+}
+// Draw a beam guide segment, optionally trimming it at z=0 with the volume.
+function line3Fov(a,b,stroke,lw){
+  if(!fovGroundClipEnabled()){ line3(a,b,stroke,lw); return; }
+  if(a.z<0&&b.z<0) return;
+  let aa=a, bb=b;
+  if((a.z<0)!==(b.z<0)){ const t=(0-a.z)/(b.z-a.z);
+    const q={x:a.x+t*(b.x-a.x),y:a.y+t*(b.y-a.y),z:0};
+    if(a.z<0) aa=q; else bb=q;
+  }
+  line3(aa,bb,stroke,lw);
+}
+function sweptFov3dFaces(door, side){
+  const faces=[], N=20, steps=[];
+  for(let pct=0;pct<=100;pct+=5) steps.push(pct);
+  for(const s of project.sensors){
+    if(!s.active||s.showFov===false) continue;
+    const c=sensorColor(s);
+    const fill=c+"0d", stroke=c+"30";
+    const rings=[];
+    for(const pct of steps){
+      const od=doorAngleForPercent(pct,door,side);
+      const pose=sensorPoseAtAngle(s,door,od,side);
+      const apex={x:door.hingeX+s.posX, y:pose.x, z:pose.y};
+      const f=pose.facing;
+      const p=deg2rad(s.pitchDeg||0), cp=Math.cos(p), sp=Math.sin(p);
+      const ax=[sp, Math.cos(f)*cp, Math.sin(f)*cp];
+      const hx=[cp,-Math.cos(f)*sp,-Math.sin(f)*sp];
+      const vx=[0, -Math.sin(f),    Math.cos(f)   ];
+      const th=Math.tan(deg2rad(s.hFovDeg/2)), tv=Math.tan(deg2rad(s.vFovDeg/2));
+      const ring=[]; for(let i=0;i<N;i++){ const t=2*Math.PI*i/N;
+        const ch=th*Math.cos(t), sv=tv*Math.sin(t), R=s.maxRangeMm;
+        const dir=V.norm([ax[0]+ch*hx[0]+sv*vx[0],ax[1]+ch*hx[1]+sv*vx[1],ax[2]+ch*hx[2]+sv*vx[2]]);
+        ring.push({x:apex.x+R*dir[0],y:apex.y+R*dir[1],z:apex.z+R*dir[2]});
+      }
+      rings.push({ring, apex});
+    }
+    for(let r=0;r<rings.length-1;r++){
+      const ra=rings[r].ring, rb=rings[r+1].ring;
+      for(let i=0;i<N;i++){ const j=(i+1)%N;
+        faces.push({pts:[ra[i],ra[j],rb[j],rb[i]], fill, stroke, lw:0.5});
+      }
+      const aa=rings[r].apex, ab=rings[r+1].apex;
+      for(let i=0;i<N;i++){ const j=(i+1)%N;
+        faces.push({pts:[aa,ra[i],ra[j]], fill, stroke, lw:0.3});
+        faces.push({pts:[ab,rb[i],rb[j]], fill, stroke, lw:0.3});
+      }
+    }
+    const first=rings[0], last=rings[rings.length-1];
+    for(let i=0;i<N;i++){ const j=(i+1)%N;
+      faces.push({pts:[first.apex,first.ring[i],first.ring[j]], fill:c+"15", stroke:c+"50", lw:0.8});
+      faces.push({pts:[last.apex,last.ring[i],last.ring[j]], fill:c+"15", stroke:c+"50", lw:0.8});
+    }
+    faces.push({pts:first.ring, fill:c+"15", stroke:c+"50", lw:0.8});
+    faces.push({pts:last.ring, fill:c+"15", stroke:c+"50", lw:0.8});
+  }
+  return faces;
+}
+function draw3DScene(){
+  cur3B=cam3Basis();
+  paintBg(ctx,W,H,true); // gradient background — 3D view only
+  const d=project.door, side=project.project.doorSide;
+  const openDeg=doorAngleForPercent(project.view.doorPct,d,side);
+  // ground floor + grid at z=0 (matches the 2D top-view grid resolution)
+  const g=3000;
+  // filled floor quad so the ground plane is clearly visible
+  const fc=[{x:-g,y:-g,z:0},{x:g,y:-g,z:0},{x:g,y:g,z:0},{x:-g,y:g,z:0}];
+  ctx.beginPath();
+  fc.forEach((p,i)=>{ const q=project3D(p); i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y); });
+  ctx.closePath(); ctx.fillStyle=cssVar("--scene-ground"); ctx.fill();
+  // grid lines: minor at gridCellMm, major every 5 cells (guard against too many)
+  const cell=gridCellMm, major=cell*5;
+  const nDiv=2*g/cell;
+  if(nDiv<=160){
+    for(let x=-g;x<=g+1;x+=cell){ if(Math.round(x)%major!==0) line3({x,y:-g,z:0},{x,y:g,z:0},cssVar("--scene-grid-minor"),1); }
+    for(let y=-g;y<=g+1;y+=cell){ if(Math.round(y)%major!==0) line3({x:-g,y,z:0},{x:g,y,z:0},cssVar("--scene-grid-minor"),1); }
+  }
+  for(let x=-g;x<=g+1;x+=major){ line3({x,y:-g,z:0},{x,y:g,z:0},cssVar("--scene-grid-major"),1); }
+  for(let y=-g;y<=g+1;y+=major){ line3({x:-g,y,z:0},{x:g,y,z:0},cssVar("--scene-grid-major"),1); }
+  // floor distance labels along the X and Y axes (every major line)
+  const cmFmt3=v=>Math.abs(v)>=1000?(v/1000).toFixed(v%1000===0?0:1)+"m":Math.round(v/10)+"cm";
+  ctx.fillStyle=cssVar("--scene-label"); ctx.font="10px sans-serif"; ctx.textAlign="center";
+  for(let x=-g;x<=g+1;x+=major){ if(x===0) continue; const q=project3D({x,y:0,z:0}); ctx.fillText(cmFmt3(x),q.x,q.y); }
+  for(let y=-g;y<=g+1;y+=major){ if(y===0) continue; const q=project3D({x:0,y,z:0}); ctx.fillText(cmFmt3(y),q.x,q.y); }
+  ctx.textAlign="left";
+  // axes
+  line3({x:0,y:0,z:0},{x:1500,y:0,z:0},cssVar("--scene-axis"),2); // X
+  line3({x:0,y:0,z:0},{x:0,y:1500,z:0},cssVar("--scene-axis"),2); // Y
+  line3({x:0,y:0,z:0},{x:0,y:0,z:1800},cssVar("--scene-axis"),2); // Z
+  const lx=project3D({x:1650,y:0,z:0}), ly=project3D({x:0,y:1650,z:0}), lz=project3D({x:0,y:0,z:1950});
+  ctx.fillStyle=cssVar("--muted"); ctx.font="11px sans-serif";
+  ctx.fillText("X",lx.x,lx.y); ctx.fillText("Y",ly.x,ly.y); ctx.fillText("Z up",lz.x,lz.y);
+  const lxf=project3D({x:2200,y:0,z:0}), lxr=project3D({x:-2200,y:0,z:0});
+  ctx.font="bold 12px sans-serif"; ctx.fillStyle=cssVar("--accent"); ctx.textAlign="center";
+  ctx.fillText("FRONT",lxf.x,lxf.y-8); ctx.fillText("REAR",lxr.x,lxr.y-8);
+  ctx.textAlign="left";
+  // collect depth-sorted faces: door prism + swept ghosts + FOV frustums + obstacles
+  let faces=[];
+  if($("showGhost").checked){
+    for(const pct of d.positionsPct){ const od=doorAngleForPercent(pct,d,side);
+      doorPolygonAtAngle(d,od,side); // (kept for parity)
+      const pr=doorPrismFaces(od,side);
+      pr.forEach(fc=>faces.push({...fc, fill:null, stroke:geo(.14), lw:1})); }
+  }
+  faces=faces.concat(doorPrismFaces(openDeg,side));
+  const apexes=[];
+  for(const s of project.sensors){ if(!s.active) continue;
+    const fr=sensorConeFaces(s,openDeg,side);
+    faces=faces.concat(fovGroundClipEnabled()?clipFovFacesAboveGround(fr.faces):fr.faces);
+    apexes.push({s,apex:fr.apex,axisEnd:fr.axisEnd,crossLines:fr.crossLines}); }
+  // Swept FOV 3D: cone envelope across all door positions
+  if($("showSweptFov3d")&&$("showSweptFov3d").checked){
+    const swept=sweptFov3dFaces(d,side);
+    faces=faces.concat(fovGroundClipEnabled()?clipFovFacesAboveGround(swept):swept);
+  }
+  // obstacles — type-aware 3D shapes, grounded at z=0 except Hanging object
+  for(const o of project.obstacles){
+    const preset=OBSTACLE_PRESETS[o.type]||OBSTACLE_PRESETS["Custom obstacle"];
+    const shape=preset.shape, ht=Math.max(50,o.height||1000);
+    const cx=o.x, cy=o.y;
+    const w2=Math.max(20,(o.width||60)/2);   // Y half-extent (lateral)
+    const d2=Math.max(20,(o.depth||200)/2);  // X half-extent (fore-aft)
+    const fill="rgba(255,152,0,.18)", stroke="rgba(255,152,0,.75)";
+    // o.z = bottom of obstacle
+    const zBot=o.z, zTop=o.z+ht;
+
+    if(shape==="circle"){
+      // True cylinder — 12-sided prism using radius=w2
+      const N=12, r=w2;
+      const ring=z=>{ const a=[]; for(let i=0;i<N;i++){
+        const t=2*Math.PI*i/N; a.push({x:cx+Math.cos(t)*r,y:cy+Math.sin(t)*r,z}); } return a; };
+      const bot=ring(zBot), top3d=ring(zTop);
+      for(let i=0;i<N;i++){const j=(i+1)%N;
+        faces.push({pts:[bot[i],bot[j],top3d[j],top3d[i]],fill,stroke,lw:1});}
+      faces.push({pts:top3d,fill,stroke,lw:1.2});
+
+    } else if(shape==="human"){
+      // Body box (legs+torso) grounded at z=0
+      const bodyTop=ht*0.82;
+      const bBox=[{x:cx-d2,y:cy-w2},{x:cx+d2,y:cy-w2},{x:cx+d2,y:cy+w2},{x:cx-d2,y:cy+w2}];
+      const bBot=bBox.map(p=>({...p,z:0})), bTop=bBox.map(p=>({...p,z:bodyTop}));
+      for(let i=0;i<4;i++){const j=(i+1)%4;
+        faces.push({pts:[bBot[i],bBot[j],bTop[j],bTop[i]],fill,stroke,lw:1});}
+      faces.push({pts:bTop,fill,stroke,lw:1});
+      // Head cylinder (8-sided) on top
+      const Nh=8, hr=w2*0.45;
+      const hring=z=>{ const a=[]; for(let i=0;i<Nh;i++){
+        const t=2*Math.PI*i/Nh; a.push({x:cx+Math.cos(t)*hr,y:cy+Math.sin(t)*hr,z}); } return a; };
+      const hBot=hring(bodyTop), hTop3d=hring(ht);
+      for(let i=0;i<Nh;i++){const j=(i+1)%Nh;
+        faces.push({pts:[hBot[i],hBot[j],hTop3d[j],hTop3d[i]],fill,stroke,lw:1});}
+      faces.push({pts:hTop3d,fill,stroke,lw:1.2});
+
+    } else {
+      // Box: width=Y, depth=X, height=Z
+      const b=[{x:cx-d2,y:cy-w2},{x:cx+d2,y:cy-w2},{x:cx+d2,y:cy+w2},{x:cx-d2,y:cy+w2}];
+      const bot=b.map(p=>({x:p.x,y:p.y,z:zBot})), top3d=b.map(p=>({x:p.x,y:p.y,z:zTop}));
+      for(let i=0;i<4;i++){const j=(i+1)%4;
+        faces.push({pts:[bot[i],bot[j],top3d[j],top3d[i]],fill,stroke,lw:1});}
+      faces.push({pts:top3d,fill,stroke,lw:1});
+    }
+  }
+  // Door photo draped on the panel (depth-sorted with everything else)
+  faces=faces.concat(doorImageFaces(d, openDeg, side));
+  faces.forEach(fc=>{ fc.depth=fc.pts.reduce((s,p)=>s+project3D(p).depth,0)/fc.pts.length; });
+  faces.sort((a,b)=>b.depth-a.depth);
+  faces.forEach(fc=> fc.tex ? drawTexQuad(fc) : face3(fc.pts, fc.fill, fc.stroke, fc.lw));
+  // A subtle centre ray gives the translucent volume a clear sensing direction.
+  apexes.forEach(({s,apex,axisEnd})=>{
+    if(s.showFov!==false && axisEnd) line3Fov(apex,axisEnd,sensorColor(s)+"aa",1.25);
+  });
+  // Horizontal and vertical great-circle sections make the spherical range
+  // boundary explicit and remain useful from every orbit-camera angle.
+  apexes.forEach(({s,crossLines})=>{ if(s.showFov===false) return;
+    (crossLines||[]).forEach(line=>{ for(let i=1;i<line.length;i++)
+      line3Fov(line[i-1],line[i],sensorColor(s)+"e6",1.5); });
+  });
+  // hinge (roof line along X)
+  line3({x:d.hingeX-(d.lengthMm||1000)/2,y:d.hingeY,z:d.hingeZ},
+        {x:d.hingeX+(d.lengthMm||1000)/2,y:d.hingeY,z:d.hingeZ},geo(.95),2);
+  // sensors (foreground) + labels
+  apexes.forEach(({s,apex})=>{ const q=dot3(apex,4,sensorColor(s));
+    ctx.fillStyle=cssVar("--ink"); ctx.font="11px sans-serif"; ctx.fillText(s.id,q.x+6,q.y-6); });
+  // proximity lines in 3D
+  if(!$("showProxLines")||$("showProxLines").checked){
+    for(const {s,apex} of apexes){
+      for(const o of project.obstacles){
+        const b=obsAABB(o);
+        const cx=clampBox(apex.x,b.x1,b.x2);
+        const cy=clampBox(apex.y,b.y1,b.y2);
+        const cz=clampBox(apex.z,b.z1,b.z2);
+        const dx=apex.x-cx,dy=apex.y-cy,dz=apex.z-cz;
+        const dist=Math.sqrt(dx*dx+dy*dy+dz*dz);
+        const col=dist<=(s.stopMm||300)?"rgba(220,50,50,0.9)":
+                  dist<=(s.warningMm||800)?"rgba(230,200,0,0.9)":"rgba(30,185,90,0.9)";
+        const cp={x:cx,y:cy,z:cz};
+        // dashed line via short segments
+        const steps=12;
+        for(let i=0;i<steps;i+=2){
+          const t0=i/steps, t1=(i+1)/steps;
+          const a={x:apex.x+(cx-apex.x)*t0, y:apex.y+(cy-apex.y)*t0, z:apex.z+(cz-apex.z)*t0};
+          const b2={x:apex.x+(cx-apex.x)*t1,y:apex.y+(cy-apex.y)*t1,z:apex.z+(cz-apex.z)*t1};
+          line3(a,b2,col,1.5);
+        }
+        dot3(cp,4,col);
+        // label at midpoint
+        const mp={x:(apex.x+cx)/2,y:(apex.y+cy)/2,z:(apex.z+cz)/2};
+        const mq=project3D(mp);
+        const label=`${s.id}→${o.id}: ${Math.round(dist)}mm`;
+        ctx.font="11px sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+        const tw=ctx.measureText(label).width;
+        ctx.fillStyle="rgba(13,17,23,0.75)";
+        ctx.fillRect(mq.x-tw/2-3,mq.y-8,tw+6,16);
+        ctx.fillStyle=col; ctx.fillText(label,mq.x,mq.y);
+        ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+      }
+    }
+  }
+  // test points (foreground)
+  for(const tp of project.testPoints){
+    const col=tp.result==="PASS"?cssVar("--green"):tp.result==="FAIL"?cssVar("--red")
+      :tp.result==="CONDITIONAL PASS"?cssVar("--yellow"):cssVar("--gray");
+    dot3({x:tp.x,y:tp.y,z:tp.z},4,col);
+    if($("showTpIds")&&$("showTpIds").checked){
+      const q=project3D({x:tp.x,y:tp.y,z:tp.z});
+      ctx.fillStyle=cssVar("--fg"); ctx.font="10px sans-serif";
+      ctx.fillText(tp.displayId||tp.id,q.x+6,q.y-4);
+    }
+  }
+  // obstacle labels — anchored above each object's top
+  for(const o of project.obstacles){
+    const lz=o.z+(o.height||1000)+80;
+    const q=project3D({x:o.x,y:o.y,z:lz});
+    ctx.fillStyle=cssVar("--orange"); ctx.font="11px sans-serif";
+    ctx.fillText(o.id+" ("+o.type+")",q.x+4,q.y); }
+}
+
+/* ====================== 5. UI PANELS / BINDING ====================== */
+/* ====================== MAP REGIONS (top X-Y view) ======================
+   User-drawn polygonal regions on the top view — e.g. the measured FOV area.
+   Region points are stored in top-plane coords {x:X fore-aft, y:Y horiz}, the
+   same coords the top view renders. Supports add / edit (drag, insert, delete
+   corners) / colour / fill / opacity / area readout. Regions persist in the
+   project JSON. Drawing/editing only happens on a Top pane. */
+const REGION_PALETTE=["#f85149","#39d353","#4da3ff","#e3b341","#a371f7",
+  "#ff9800","#2dd4bf","#f778ba"];
+let regionMode=null;       // null | "draw" | "edit" | "move"
+let activeRegionId=null;   // region being drawn / edited / moved
+let regionDragVtx=null;    // {r, i} vertex being dragged
+let regionMoveDrag=null;   // {r, start:{x,y}, orig:[...]} while translating a region
+let regionDownScreen=null; // client {x,y} at last mousedown (click-vs-drag test)
+
+function newRegion(){
+  seq.r=(seq.r||0)+1;
+  const col=REGION_PALETTE[(seq.r-1)%REGION_PALETTE.length];
+  return { id:"R"+seq.r, name:"Region "+seq.r, color:col,
+    points:[], fill:true, opacity:0.25, visible:true };
+}
+function activeRegion(){ return (project.regions||[]).find(r=>r.id===activeRegionId)||null; }
+// Enclosed area (mm²) via the shoelace formula, top-plane X-Y.
+function regionArea(r){
+  const p=r.points; if(!p||p.length<3) return 0;
+  let a=0; for(let i=0,j=p.length-1;i<p.length;j=i++) a+=p[j].x*p[i].y - p[i].x*p[j].y;
+  return Math.abs(a)/2;
+}
+function regionCentroid(pts){ let x=0,y=0; pts.forEach(p=>{x+=p.x;y+=p.y;});
+  return {x:x/pts.length, y:y/pts.length}; }
+function hexToRgba(hex,a){
+  hex=(hex||"#f85149").replace("#","");
+  if(hex.length===3) hex=hex.split("").map(c=>c+c).join("");
+  const n=parseInt(hex,16)||0;
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+// Ensure the top view is visible so regions can be drawn/seen.
+function ensureTopView(){
+  if(project.view.plane!=="top" && project.view.plane!=="split"){
+    setViewPlane("top"); $("viewPlane").value="top";
+  }
+}
+function addRegion(){
+  ensureTopView();
+  const r=newRegion(); project.regions.push(r);
+  regionMode="draw"; activeRegionId=r.id; regionDragVtx=null; regionMoveDrag=null;
+  renderRegionList(); render();
+}
+function finishRegion(){
+  const r=activeRegion();
+  if(r && r.points.length<3)                    // discard degenerate region
+    project.regions=project.regions.filter(x=>x!==r);
+  regionMode=null; activeRegionId=null; regionDragVtx=null; regionMoveDrag=null;
+  renderRegionList(); render();
+}
+function removeRegion(id){
+  project.regions=project.regions.filter(r=>r.id!==id);
+  if(activeRegionId===id){ regionMode=null; activeRegionId=null; regionDragVtx=null; regionMoveDrag=null; }
+  renderRegionList(); render();
+}
+function editRegion(id){
+  if(regionMode==="edit" && activeRegionId===id){ regionMode=null; activeRegionId=null; }
+  else { ensureTopView(); regionMode="edit"; activeRegionId=id; regionDragVtx=null; }
+  regionMoveDrag=null; renderRegionList(); render();
+}
+// Move the whole region as a group: toggle move mode, then drag the area on
+// the top view to translate all its corners together.
+function moveRegion(id){
+  if(regionMode==="move" && activeRegionId===id){ regionMode=null; activeRegionId=null; }
+  else { ensureTopView(); regionMode="move"; activeRegionId=id; regionDragVtx=null; }
+  regionMoveDrag=null; renderRegionList(); render();
+}
+function updateRegStatus(){
+  const el=$("regStatus"), fb=$("regFinishBtn"); if(!el) return;
+  const r=activeRegion();
+  if(regionMode==="draw"){
+    el.textContent=`Drawing ${r?r.name:""}: ${r?r.points.length:0} point(s) — `
+      +`click the top view to add, double-click or Finish to close.`;
+    if(fb) fb.style.display="inline-block";
+  } else if(regionMode==="edit"){
+    el.textContent=`Editing ${r?r.name:""} — drag corners · drag an edge to insert `
+      +`· right-click a corner to delete.`;
+    if(fb) fb.style.display="none";
+  } else if(regionMode==="move"){
+    el.textContent=`Moving ${r?r.name:""} — drag the area on the top view to move the `
+      +`whole region · drag outside it to pan.`;
+    if(fb) fb.style.display="none";
+  } else { el.textContent=""; if(fb) fb.style.display="none"; }
+}
+function renderRegionList(){
+  const el=$("regionList"); if(!el) return;
+  if(!project.regions || !project.regions.length){
+    el.innerHTML='<p class="mini">No regions yet. Click “+ Add region”, then click the top view.</p>';
+    updateRegStatus(); return;
+  }
+  el.innerHTML="";
+  project.regions.forEach(r=>{
+    const areaM2=(regionArea(r)/1e6).toFixed(2);
+    const editing = regionMode==="edit" && activeRegionId===r.id;
+    const moving = regionMode==="move" && activeRegionId===r.id;
+    const d=document.createElement("div"); d.className="list-item";
+    if(activeRegionId===r.id && regionMode) d.style.borderColor=r.color;
+    d.innerHTML=`
+      <div class="top"><strong style="color:${r.color}">${r.id}</strong>
+        <span>
+          <button onclick="moveRegion('${r.id}')"${moving?' class="primary"':''}>${moving?"Done":"Move"}</button>
+          <button onclick="editRegion('${r.id}')"${editing?' class="primary"':''}>${editing?"Done":"Edit"}</button>
+          <button onclick="removeRegion('${r.id}')">✕</button>
+        </span></div>
+      <div class="row">
+        <div class="field"><label>Name</label>
+          <input data-k="name" value="${(r.name||"").replace(/"/g,'&quot;')}"></div>
+        <div class="field" style="max-width:64px"><label>Color</label>
+          <input type="color" data-k="color" value="${r.color}" style="padding:2px;height:30px"></div>
+      </div>
+      <div class="row" style="align-items:center">
+        <label class="mini"><input type="checkbox" data-k="fill" ${r.fill?"checked":""}> Fill</label>
+        <label class="mini"><input type="checkbox" data-k="visible" ${r.visible?"checked":""}> Show</label>
+        <div class="field" style="flex:1"><label>Fill opacity</label>
+          <input type="range" min="0" max="1" step="0.05" data-k="opacity" value="${r.opacity}"></div>
+      </div>
+      <p class="mini">${r.points.length} point(s) · area <b>${areaM2} m²</b></p>`;
+    d.querySelectorAll("[data-k]").forEach(inp=>{
+      const ev = inp.type==="checkbox" ? "change" : "input";
+      inp.addEventListener(ev,()=>{
+        const k=inp.dataset.k;
+        r[k]= inp.type==="checkbox"?inp.checked
+            : inp.type==="range"?parseFloat(inp.value)
+            : inp.value;
+        render(); // live redraw; list not rebuilt so inputs keep focus
+      });
+    });
+    el.appendChild(d);
+  });
+  updateRegStatus();
+}
+// Draw all regions on the current pane (top view only).
+function drawRegions(){
+  if(curPlane!=="top" || !project.regions) return;
+  for(const r of project.regions){
+    const isActive = activeRegionId===r.id && !!regionMode;
+    if(!r.visible && !isActive) continue;
+    const pts=r.points; if(!pts.length) continue;
+    const scr=pts.map(worldToScreen);
+    const drawingThis = regionMode==="draw" && activeRegionId===r.id;
+    // fill (closed polygons only)
+    if(r.fill && pts.length>=3){
+      ctx.beginPath();
+      scr.forEach((q,i)=>i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y));
+      ctx.closePath();
+      ctx.fillStyle=hexToRgba(r.color, r.opacity); ctx.fill();
+    }
+    // outline (open polyline while still drawing)
+    ctx.beginPath();
+    scr.forEach((q,i)=>i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y));
+    if(!drawingThis && pts.length>=3) ctx.closePath();
+    ctx.strokeStyle=r.color; ctx.lineWidth=isActive?2:1.5; ctx.stroke();
+    // corner handles when active
+    if(isActive) scr.forEach(q=>{ ctx.beginPath(); ctx.arc(q.x,q.y,4,0,7);
+      ctx.fillStyle=cssVar("--handle-fill"); ctx.fill(); ctx.strokeStyle=r.color; ctx.lineWidth=1.5; ctx.stroke(); });
+    // label + area at centroid
+    const c=worldToScreen(regionCentroid(pts));
+    ctx.fillStyle=r.color; ctx.font="11px sans-serif";
+    ctx.fillText(r.name + (pts.length>=3? "  "+(regionArea(r)/1e6).toFixed(2)+" m²":""),
+      c.x+6, c.y-6);
+  }
+}
+// Coverage zones on the FRONT view: dashed band + covered/uncovered sample dots
+// (green = inside a FOV at the current door position, red = gap) + a live %.
+function drawZones(){
+  if(curPlane!=="front" || !$("showZones") || !$("showZones").checked || !project.zones) return;
+  const side=project.project.doorSide;
+  const od=doorAngleForPercent(project.view.doorPct,project.door,side);
+  const fovs=project.sensors.filter(s=>s.active && s.showFov!==false)
+    .map(s=>sensorFovProject(s,project.door,od,side,"front"));
+  const gridMm=Math.max(20,(project.overlap&&project.overlap.gridMm)||60);
+  for(const z of project.zones){
+    if(!z.visible) continue;
+    const poly=zonePolygon(z, side);
+    polyPath(poly);
+    ctx.fillStyle=hexToRgba(z.color,0.06); ctx.fill();
+    ctx.save(); ctx.setLineDash([6,4]);
+    ctx.strokeStyle=z.color; ctx.lineWidth=1.5; ctx.stroke(); ctx.restore();
+    const samples=zoneSamplePoints(z, side, gridMm);
+    let covered=0;
+    for(const pt of samples){
+      const inFov=fovs.some(f=>f.length>=3 && pointInPolygon(pt,f));
+      if(inFov) covered++;
+      const q=worldToScreen(pt);
+      ctx.fillStyle= inFov ? "rgba(57,211,83,.55)" : "rgba(248,81,73,.5)";
+      ctx.beginPath(); ctx.arc(q.x,q.y,1.6,0,7); ctx.fill();
+    }
+    const cov=samples.length? Math.round(covered/samples.length*100):0;
+    const lp=worldToScreen(poly[3]); // (yNear, zHigh) — top inner corner
+    ctx.fillStyle=z.color; ctx.font="11px sans-serif"; ctx.textAlign="left";
+    ctx.fillText(`${z.name}  ${cov}%`, lp.x+4, lp.y-4);
+  }
+}
+// The top-view pane canvas (right pane in split, else the single pane).
+function topCanvas(){ return project.view.plane==="split" ? cv2El : cvEl; }
+// Point the render target at a canvas+pane so world<->screen maths line up.
+function useTopPane(canvas){
+  const info=paneInfo(canvas), rect=canvas.getBoundingClientRect();
+  W=rect.width; H=rect.height; curView=info.view; curPlane=info.plane;
+  return {info, rect};
+}
+// Hit-test a region against screen coords: a corner, then an edge.
+function regionHit(r, sx, sy){
+  const pts=r.points; if(!pts.length) return null;
+  for(let i=0;i<pts.length;i++){ const q=worldToScreen(pts[i]);
+    if(Math.hypot(q.x-sx,q.y-sy)<=7) return {type:"vertex", i}; }
+  const n=pts.length, lim = n>=3 ? n : n-1;
+  for(let i=0;i<lim;i++){ const a=worldToScreen(pts[i]), b=worldToScreen(pts[(i+1)%n]);
+    if(distPointSeg({x:sx,y:sy}, a, b)<=6){
+      const w=screenToWorld(sx,sy);
+      return {type:"edge", i, point:{x:Math.round(w.x), y:Math.round(w.y)}}; } }
+  return null;
+}
+// Draw-mode click: add a corner (ignored if the gesture was a pan-drag).
+function onRegionClick(canvas,e){
+  if(regionMode!=="draw") return;
+  const {info,rect}=useTopPane(canvas);
+  if(info.plane!=="top") return;
+  if(regionDownScreen && Math.hypot(e.clientX-regionDownScreen.x,
+     e.clientY-regionDownScreen.y)>5) return;                // it was a pan
+  const r=activeRegion(); if(!r) return;
+  const w=screenToWorld(e.clientX-rect.left, e.clientY-rect.top);
+  r.points.push({x:Math.round(w.x), y:Math.round(w.y)});
+  renderRegionList(); render();
+}
+// Double-click ends drawing; drop the duplicate corner the 2nd click added.
+function onRegionDblClick(canvas,e){
+  if(regionMode!=="draw") return;
+  const r=activeRegion();
+  if(r){ const n=r.points.length;
+    if(n>=2){ const a=r.points[n-1], b=r.points[n-2];
+      if(Math.abs(a.x-b.x)<2 && Math.abs(a.y-b.y)<2) r.points.pop(); } }
+  finishRegion();
+}
+// Edit-mode right-click: delete the corner under the cursor.
+function onRegionRightClick(canvas,e){
+  if(regionMode!=="edit") return false;
+  const {info,rect}=useTopPane(canvas);
+  if(info.plane!=="top") return false;
+  const r=activeRegion(); if(!r) return false;
+  const sx=e.clientX-rect.left, sy=e.clientY-rect.top;
+  for(let i=0;i<r.points.length;i++){ const q=worldToScreen(r.points[i]);
+    if(Math.hypot(q.x-sx,q.y-sy)<=7){ r.points.splice(i,1);
+      renderRegionList(); render(); return true; } }
+  return false;
+}
+
+function $(id){return document.getElementById(id);}
+function bindTabs(){
+  $("tabs").addEventListener("click",e=>{
+    const b=e.target.closest("button"); if(!b) return;
+    document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("active",x===b));
+    document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("active",p.dataset.tab===b.dataset.tab));
+    if(b.dataset.tab==="results") renderTpTable();
+    if(b.dataset.tab==="regions") renderRegionList();
+    if(b.dataset.tab==="zones"){
+      if($("showZones")) $("showZones").checked=true;
+      if(project.view.plane!=="front" && project.view.plane!=="split") setViewPlane("front");
+      coverageCache=null; renderZonePanel(); render();
+    }
+    if(b.dataset.tab==="compare") renderComparePanel();
+  });
+}
+// Re-render panels whose numbers depend on the current door position.
+function refreshDoorPanels(){}
+// ---- Project fields ----
+function bindProject(){
+  const map={p_name:"name",p_vehicle:"vehicleModel",p_customer:"customer",
+    p_side:"doorSide",p_by:"preparedBy",p_date:"testDate",p_notes:"notes"};
+  for(const id in map){
+    $(id).addEventListener("input",()=>{ project.project[map[id]]=$(id).value;
+      if(id==="p_side"){ syncDoorSideToggle(); recomputeAll(); } render(); });
+  }
+}
+function setDoorSide(side){
+  project.project.doorSide=side;
+  const pSel=$("p_side"); if(pSel) pSel.value=side;
+  const lh=$("d_sideLH"), rh=$("d_sideRH");
+  if(lh) lh.classList.toggle("primary", side==="LH");
+  if(rh) rh.classList.toggle("primary", side==="RH");
+  recomputeAll(); render();
+}
+function syncDoorSideToggle(){
+  const side=project.project.doorSide;
+  const lh=$("d_sideLH"), rh=$("d_sideRH");
+  if(lh) lh.classList.toggle("primary", side==="LH");
+  if(rh) rh.classList.toggle("primary", side==="RH");
+}
+function loadProjectFields(){
+  const p=project.project;
+  $("p_name").value=p.name; $("p_vehicle").value=p.vehicleModel;
+  $("p_customer").value=p.customer; $("p_side").value=p.doorSide;
+  $("p_by").value=p.preparedBy; $("p_date").value=p.testDate; $("p_notes").value=p.notes;
+  renderTestSetsList();
+  syncDoorSideToggle();
+}
+// ---- Door fields ----
+function bindDoor(){
+  const map={d_hx:"hingeX",d_hy:"hingeY",d_hz:"hingeZ",d_len:"lengthMm",
+    d_h:"heightMm",d_max:"maxOpenDeg",d_base:"baseAngleDeg"};
+  for(const id in map){
+    $(id).addEventListener("input",()=>{ project.door[map[id]]=parseFloat($(id).value)||0;
+      recomputeAll(); render(); });
+  }
+}
+function loadDoorFields(){
+  const d=project.door;
+  $("d_hx").value=d.hingeX; $("d_hy").value=d.hingeY; $("d_hz").value=d.hingeZ;
+  $("d_h").value=d.heightMm; $("d_max").value=d.maxOpenDeg; $("d_base").value=d.baseAngleDeg;
+  $("d_len").value=d.lengthMm;
+  $("d_profile").value=(d.profile||[]).map(p=>p.y+","+p.z).join("\n");
+}
+// ---- Door photo controls (3D) ----
+function uploadDoorImage(inp){
+  const f=inp.files && inp.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    const old=project.door.image||{};
+    project.door.image={src:rd.result,
+      opacity:old.opacity!=null?old.opacity:1,
+      sourceX:old.sourceX||0, sourceZ:old.sourceZ||0,
+      projectX:old.projectX||0, projectZ:old.projectZ||0,
+      flipX:!!old.flipX, showSource:old.showSource!==false};
+    doorImgSrc=null; ensureDoorImg(); updateDoorImageUi(); render();
+  };
+  rd.readAsDataURL(f);
+}
+function removeDoorImage(){
+  project.door.image=null; doorImgSrc=null; doorImgEl=null;
+  const i=$("d_img"); if(i) i.value="";
+  updateDoorImageUi(); render();
+}
+function setDoorImageOpacity(v){
+  if(!project.door.image) return;
+  project.door.image.opacity=Math.max(0,Math.min(1,(+v)/100));
+  render();
+}
+function setDoorImageAdjustment(key,v){
+  if(!project.door.image) return;
+  project.door.image[key]=Number.isFinite(+v)?+v:0;
+  render();
+}
+function setDoorImageFlip(flipped){
+  if(!project.door.image) return;
+  project.door.image.flipX=!!flipped;
+  render();
+}
+function setDoorImageSourceVisible(visible){
+  if(!project.door.image) return;
+  project.door.image.showSource=!!visible;
+  render();
+}
+function updateDoorImageUi(){
+  const has=!!(project.door.image && project.door.image.src);
+  const cfg=project.door.image||{}, st=$("d_img_status"), op=$("d_img_op");
+  if(st) st.textContent = has
+    ? "Image loaded — ZX reference and its movable door projection are both visible in 3D."
+    : "No image. Tip: use a straight-on image prepared in the ZX view.";
+  if(op) op.value=Math.round(((project.door.image && project.door.image.opacity!=null)
+    ? project.door.image.opacity : 1)*100);
+  const vals={d_img_sx:cfg.sourceX||0,d_img_sz:cfg.sourceZ||0,
+    d_img_px:cfg.projectX||0,d_img_pz:cfg.projectZ||0};
+  for(const id in vals) if($(id)) $(id).value=vals[id];
+  if($("d_img_flip")) $("d_img_flip").checked=!!cfg.flipX;
+  if($("d_img_source")) $("d_img_source").checked=cfg.showSource!==false;
+}
+function applyProfile(){
+  const lines=$("d_profile").value.split(/\n+/).map(l=>l.trim()).filter(Boolean);
+  const prof=[];
+  for(const l of lines){
+    const m=l.split(/[,\s]+/).map(Number);
+    if(m.length>=2 && m.every(n=>!isNaN(n))) prof.push({y:m[0], z:m[1]});
+  }
+  if(prof.length<3){ alert("Need at least 3 valid 'Y,Z' corner points."); return; }
+  project.door.profile=prof; recomputeAll(); render();
+}
+function resetProfile(){
+  project.door.profile=wingDefaultProfile();
+  $("d_profile").value=project.door.profile.map(p=>p.y+","+p.z).join("\n");
+  recomputeAll(); render();
+}
+// ---- Sensors ----
+const SENSOR_COLORS=["#4da3ff","#ff7043","#66bb6a","#ffca28","#ab47bc","#26c6da"];
+function addSensor(){
+  seq.s=Math.max(seq.s, project.sensors.length);
+  const s=demoSensor(); s.id="S"+(++seq.s); s.name="Sensor "+s.id;
+  s.color=SENSOR_COLORS[(seq.s-1)%SENSOR_COLORS.length];
+  project.sensors.push(s); renderSensorList(); recomputeAll(); render();
+}
+function removeSensor(id){
+  project.sensors=project.sensors.filter(s=>s.id!==id);
+  renderSensorList(); recomputeAll(); render();
+}
+function renderSensorList(){
+  const el=$("sensorList"); el.innerHTML="";
+  project.sensors.forEach(s=>{
+    const collapsed=s._uiCollapsed!==false;
+    const d=document.createElement("div"); d.className="list-item";
+    d.innerHTML=`
+      <div class="top"><strong>${s.id}</strong>
+        <span>
+          <label class="mini"><input type="checkbox" ${s.active?"checked":""} data-k="active"> active</label>
+          <label class="mini"><input type="checkbox" ${s.showFov===false?"":"checked"} data-k="showFov"> FOV</label>
+          <input type="color" data-k="color" value="${s.color||'#4da3ff'}" title="Sensor color" style="width:28px;height:22px;padding:1px 2px;border:none;background:none;cursor:pointer;vertical-align:middle">
+          <button class="sensor-toggle" data-toggle="details">${collapsed?"▶ Show":"▼ Hide"}</button>
+          <button onclick="removeSensor('${s.id}')">✕</button></span></div>
+      <div class="field"><label>Name</label><input data-k="name" value="${s.name}"></div>
+      <div class="sensor-details${collapsed?" collapsed":""}" style="max-height:${collapsed?0:600}px">
+      <div class="row">
+        <div class="field"><label>Pos Y local</label><input type="number" data-k="posY" value="${s.posY}"></div>
+        <div class="field"><label>Pos Z local</label><input type="number" data-k="posZ" value="${s.posZ}"></div>
+        <div class="field"><label>Pos X fore-aft</label><input type="number" data-k="posX" value="${s.posX}"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Yaw (°)</label><input type="number" data-k="yawDeg" value="${s.yawDeg}"></div>
+        <div class="field"><label>Pitch fwd (°)</label><input type="number" data-k="pitchDeg" value="${s.pitchDeg||0}"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>H-FOV (°)</label><input type="number" data-k="hFovDeg" value="${s.hFovDeg}"></div>
+        <div class="field"><label>V-FOV (°)</label><input type="number" data-k="vFovDeg" value="${s.vFovDeg}"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Min range (mm)</label><input type="number" data-k="minRangeMm" value="${s.minRangeMm}"></div>
+        <div class="field"><label>Max range (mm)</label><input type="number" data-k="maxRangeMm" value="${s.maxRangeMm}"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Warning (mm)</label><input type="number" data-k="warningMm" value="${s.warningMm}"></div>
+        <div class="field"><label>Stop (mm)</label><input type="number" data-k="stopMm" value="${s.stopMm}"></div>
+      </div>
+      </div>`;
+    d.querySelector("[data-toggle=details]").addEventListener("click",function(){
+      const det=d.querySelector(".sensor-details");
+      const isCol=det.classList.contains("collapsed");
+      det.style.maxHeight=isCol?det.scrollHeight+"px":"0";
+      det.classList.toggle("collapsed"); s._uiCollapsed=!isCol;
+      this.textContent=isCol?"▼ Hide":"▶ Show";
+    });
+    d.querySelectorAll("[data-k]").forEach(inp=>{
+      inp.addEventListener("input",()=>{
+        const k=inp.dataset.k;
+        s[k] = inp.type==="checkbox"?inp.checked : (inp.type==="number"?parseFloat(inp.value)||0:inp.value);
+        recomputeAll(); render();
+      });
+    });
+    el.appendChild(d);
+  });
+}
+// ---- Obstacles ----
+function addObstacle(){
+  seq.o=Math.max(seq.o, project.obstacles.length);
+  const def=OBSTACLE_PRESETS["Pole"];
+  const o={id:"O"+(++seq.o),type:"Pole",x:1000,y:500,z:0,
+    width:def.width,depth:def.depth,height:def.height};
+  project.obstacles.push(o); renderObstacleList(); refreshObstacleSelect(); render();
+}
+function removeObstacle(id){
+  project.obstacles=project.obstacles.filter(o=>o.id!==id);
+  renderObstacleList(); refreshObstacleSelect(); render();
+}
+function renderObstacleList(){
+  const el=$("obstacleList"); el.innerHTML="";
+  project.obstacles.forEach(o=>{
+    const d=document.createElement("div"); d.className="list-item";
+    d.innerHTML=`
+      <div class="top"><strong>${o.id}</strong><button onclick="removeObstacle('${o.id}')">✕</button></div>
+      <div class="field"><label>Type</label><select data-k="type">${
+        OBSTACLE_TYPES.map(t=>`<option ${t===o.type?"selected":""}>${t}</option>`).join("")}</select></div>
+      <p class="field-note">Position — vehicle frame origin</p>
+      <div class="row">
+        <div class="field"><label>X fore-aft (mm)</label><input type="number" data-k="x" value="${o.x}"></div>
+        <div class="field"><label>Y lateral (mm)</label><input type="number" data-k="y" value="${o.y}"></div>
+        <div class="field"><label>Z bottom (mm)</label><input type="number" data-k="z" value="${o.z}"></div>
+      </div>
+      <p class="field-note">Object size — bounding box dimensions</p>
+      <div class="row">
+        <div class="field"><label>Width (Y mm)</label><input type="number" data-k="width" value="${o.width}"></div>
+        <div class="field"><label>Depth (X mm)</label><input type="number" data-k="depth" value="${o.depth||200}"></div>
+        <div class="field"><label>Height (Z mm)</label><input type="number" data-k="height" value="${o.height}"></div>
+      </div>`;
+    d.querySelectorAll("[data-k]").forEach(inp=>{
+      inp.addEventListener("input",()=>{
+        const k=inp.dataset.k;
+        o[k]= inp.type==="number"?parseFloat(inp.value)||0:inp.value;
+        if(k==="type"){
+          // apply preset defaults when type changes
+          const preset=OBSTACLE_PRESETS[o.type];
+          if(preset){
+            o.width=preset.width; o.depth=preset.depth; o.height=preset.height;
+            d.querySelector("[data-k=width]").value=preset.width;
+            d.querySelector("[data-k=depth]").value=preset.depth;
+            d.querySelector("[data-k=height]").value=preset.height;
+          }
+        }
+        refreshObstacleSelect(); render();
+      });
+    });
+    el.appendChild(d);
+  });
+}
+function refreshObstacleSelect(){
+  const sel=$("tp_obs"); const cur=sel.value;
+  sel.innerHTML=project.obstacles.map(o=>`<option value="${o.id}">${o.id} — ${o.type}</option>`).join("");
+  if(cur) sel.value=cur;
+  const setSel=$("tpSetObs");
+  if(setSel){ const curSet=setSel.value;
+    setSel.innerHTML=project.obstacles.map(o=>`<option value="${o.id}">${o.id} — ${o.type}</option>`).join("");
+    if(project.obstacles.find(o=>o.id===curSet)) setSel.value=curSet;
+  }
+  refreshMoveObsSelect();
+}
+function refreshMoveObsSelect(){
+  const sel=$("moveObsSel"); if(!sel) return;
+  const cur=sel.value;
+  sel.innerHTML=project.obstacles.map(o=>`<option value="${o.id}">${o.id} — ${o.type}</option>`).join("");
+  if(project.obstacles.find(o=>o.id===cur)) sel.value=cur;
+}
+
+/* ---- Test points ---- */
+function makeTpId(doorPct,z,x,y){
+  const side=project.project.doorSide;
+  const pad=(n,w)=>String(Math.round(Math.abs(n))).padStart(w,"0");
+  seq.t++;
+  return `${side}-D${pad(doorPct,2)}-Z${pad(z,3)}-X${pad(x,3)}-Y${pad(y,3)}-P${pad(seq.t,2)}`;
+}
+function addTestPoint(x,y,z,obsId,customId){
+  const doorPct=project.view.doorPct;
+  const id=customId||makeTpId(doorPct,z,x,y);
+  const tp={ id, x,y,z, doorPct,
+    obstacleId:obsId||(project.obstacles[0]&&project.obstacles[0].id)||"",
+    sensorId:null, inFov:false, blind:false, result:"", comments:"" };
+  project.testPoints.push(tp);
+  evaluateTestPoint(tp);
+  renderTpTable(); render();
+}
+function addTestPointManual(){
+  const idField=$("tp_id");
+  const customId=idField?idField.value.trim():"";
+  addTestPoint(parseFloat($("tp_x").value)||0, parseFloat($("tp_y").value)||0,
+    0, $("tp_obs").value, customId||undefined);
+  if(idField) idField.value="";
+  renderSinglePointsList();
+}
+// Standard 21-point door-zone test grid. x = fore-aft (0 = center column,
+// 60 cm spacing). The third value is the OUTBOARD distance (mm) from the door
+// edge (y=0 at the door edge); the world Y is computed per door at load/recompute.
+const DOOR_ZONE_TEST_SET=[
+  ["P1",-1800,200],["P2",-1800,400],["P3",-1800,950],
+  ["P4",-1200,950],["P5",-600,950],["P6",0,950],
+  ["P7",600,950],["P8",1200,950],["P9",1800,950],
+  ["P10",1800,400],["P11",1800,200],
+  ["P12",1200,400],["P13",600,400],["P14",0,400],
+  ["P15",-600,400],["P16",-1200,400],
+  ["P17",-1200,200],["P18",-600,200],["P19",0,200],
+  ["P20",600,200],["P21",1200,200],
+];
+// Outboard-most Y of the door at closed position — the door's outer edge.
+function doorEdgeY(){
+  const side=project.project.doorSide;
+  const poly=doorPolygonAtAngle(project.door, 0, side); // plane.x = world Y
+  if(!poly.length) return 0;
+  const ys=poly.map(p=>p.x);
+  return side==="RH" ? Math.max(...ys) : Math.min(...ys);
+}
+function doorOutboardSign(){ return project.project.doorSide==="RH" ? 1 : -1; }
+// Re-anchor door-edge-relative test points to the current door (per-door update).
+function refreshDoorRelTestPoints(){
+  if(!project||!project.testPoints) return;
+  const edge=doorEdgeY(), sign=doorOutboardSign();
+  const pct=project.view.doorPct;
+  const sets=project.testSets||[];
+  for(const tp of project.testPoints){
+    if(tp.doorRel){
+      const s=sets.find(s=>s.id===tp.setId);
+      const xShift=s?s.xShift:0, yShift=s?s.yShift:0;
+      tp.y=Math.round(edge+sign*(tp.yMag+yShift));
+      if(tp.xBase!=null) tp.x=Math.round(tp.xBase+xShift);
+      tp.doorPct=pct;
+    }
+  }
+}
+function nextSetId(){
+  const sets=project.testSets||[];
+  let n=1; while(sets.some(s=>s.id==="Set"+n)) n++;
+  return "Set"+n;
+}
+function loadDoorZoneTestSet(){
+  const obsId=($("tpSetObs")&&$("tpSetObs").value)
+    || (project.obstacles[0]&&project.obstacles[0].id) || "";
+  const setId=nextSetId();
+  if(!project.testSets) project.testSets=[];
+  project.testSets.push({id:setId, obsId, xShift:0, yShift:0});
+  const doorPct=project.view.doorPct;
+  const edge=doorEdgeY(), sign=doorOutboardSign();
+  for(const [baseName,x,mag] of DOOR_ZONE_TEST_SET){
+    const id=setId+"-"+baseName;
+    const tp={ id, displayId:baseName, x:Math.round(x), y:Math.round(edge+sign*mag), z:0, doorPct, obstacleId:obsId,
+      setId, doorRel:true, yMag:mag, xBase:x, sensorId:null, inFov:false, blind:false, result:"", comments:"" };
+    project.testPoints.push(tp);
+    evaluateTestPoint(tp);
+  }
+  renderTestSetsList(); renderTpTable(); render();
+}
+function deleteTestSet(setId){
+  if(!confirm("Delete set "+setId+" and all its points?")) return;
+  project.testPoints=project.testPoints.filter(t=>t.setId!==setId);
+  project.testSets=(project.testSets||[]).filter(s=>s.id!==setId);
+  renderTestSetsList(); renderTpTable(); render();
+}
+function updateSetShift(setId, axis, val){
+  const s=(project.testSets||[]).find(s=>s.id===setId); if(!s) return;
+  s[axis]=parseFloat(val)||0;
+  recomputeAll(); render();
+}
+function renderTestSetsList(){
+  const wrap=$("testSetsList"); if(!wrap) return;
+  const sets=project.testSets||[];
+  if(!sets.length){ wrap.innerHTML="<p class='mini' style='color:var(--muted)'>No sets loaded.</p>"; return; }
+  wrap.innerHTML=sets.map(s=>{
+    const count=(project.testPoints||[]).filter(t=>t.setId===s.id).length;
+    return `<div style="border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin:4px 0">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <strong style="font-size:11px">${s.id}</strong>
+        <span class="mini" style="color:var(--muted)">${count} pts · ${s.obsId}</span>
+        <span style="flex:1"></span>
+        <button onclick="deleteTestSet('${s.id}')" style="font-size:10px;padding:1px 6px;color:var(--red)">Delete</button>
+      </div>
+      <div class="row" style="gap:6px">
+        <div class="field" style="flex:1"><label style="font-size:10px">X shift (mm)</label>
+          <input type="number" value="${s.xShift}" step="10" style="font-size:11px;width:70px"
+            onchange="updateSetShift('${s.id}','xShift',this.value)"></div>
+        <div class="field" style="flex:1"><label style="font-size:10px">Y shift (mm)</label>
+          <input type="number" value="${s.yShift}" step="10" style="font-size:11px;width:70px"
+            onchange="updateSetShift('${s.id}','yShift',this.value)"></div>
+      </div>
+    </div>`; }).join("");
+}
+function clearTestPoints(){
+  if(project.testPoints.length && !confirm("Clear all test points?")) return;
+  project.testPoints=[]; project.testSets=[];
+  renderTestSetsList(); renderSinglePointsList(); renderTpTable(); render();
+}
+// Repeatability statistics (§16) from a test point's measured repetitions.
+// reps: [{detected, measuredMm, actualMm, delayMs, false}]. Returns null if none.
+function tpStats(tp){
+  const r=tp.reps; if(!r||!r.length) return null;
+  const n=r.length, det=r.filter(x=>x.detected).length;
+  const fp=r.filter(x=>x.false).length;
+  const dists=r.filter(x=>x.detected && isFinite(x.measuredMm)).map(x=>x.measuredMm);
+  const delays=r.filter(x=>isFinite(x.delayMs)).map(x=>x.delayMs);
+  const mean=a=>a.length?a.reduce((s,v)=>s+v,0)/a.length:null;
+  const md=mean(dists);
+  const std=dists.length? Math.sqrt(mean(dists.map(v=>(v-md)*(v-md)))):null;
+  const rate=n?det/n*100:0;
+  return { n, det, rate, missRate:100-rate, falseRate:n?fp/n*100:0,
+    meanMm:md, minMm:dists.length?Math.min(...dists):null, maxMm:dists.length?Math.max(...dists):null,
+    stdMm:std, meanDelay:mean(delays), maxDelay:delays.length?Math.max(...delays):null };
+}
+// Detection-rate classification (§16), configurable thresholds.
+function rateResult(rate){
+  const e=project.eval||{passRatePct:95,condRatePct:90};
+  if(rate>=e.passRatePct) return "PASS";
+  if(rate>=e.condRatePct) return "CONDITIONAL PASS";
+  return "FAIL";
+}
+// Auto in-FOV + blind evaluation (criteria 9 & 12). Plane = (Y,Z).
+// When measured repetitions exist, the result comes from the detection rate (§16);
+// otherwise from the geometric in-FOV check.
+function evaluateTestPoint(tp, sweptPoly){
+  const obs=project.obstacles.find(o=>o.id===tp.obstacleId);
+  const sid=isObsInAnyFov(tp, obs, tp.doorPct);
+  tp.sensorId=sid; tp.inFov=!!sid;
+  const pt={x:tp.y, y:tp.z};
+  const swept = sweptPoly || sweptEnvelopePolygon(project.door,project.project.doorSide);
+  const inSwept=pointInPolygon(pt, swept);
+  tp.blind = inSwept && !tp.inFov;
+  if(tp._manual) return;
+  const st=tpStats(tp);
+  if(st) tp.result = rateResult(st.rate);            // measured data wins
+  else if(tp.result!=="CONDITIONAL PASS") tp.result = tp.inFov ? "PASS" : "FAIL";
+}
+// Convex-hull "measured FOV" boundary from PASS test points, front plane (Y,Z).
+function measuredFovHull(){
+  const pts=project.testPoints.filter(t=>t.result==="PASS").map(t=>({x:t.y,y:t.z}));
+  return pts.length>=3 ? convexHull(pts) : null;
+}
+function recomputeAll(){
+  refreshDoorRelTestPoints();
+  const swept=sweptEnvelopePolygon(project.door,project.project.doorSide);
+  project.testPoints.forEach(tp=>evaluateTestPoint(tp,swept));
+  renderTpTable();
+}
+
+/* ========================= HEATMAP ========================= */
+function _pip(px,py,poly){ // ray-casting point-in-polygon
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;
+    if(((yi>py)!==(yj>py))&&px<(xj-xi)*(py-yi)/(yj-yi)+xi) inside=!inside;
+  }
+  return inside;
+}
+function _heatCol(dist, stopMm, warnMm, maxR){
+  if(dist>maxR) return null;
+  if(dist<=stopMm) return "rgba(220,50,50,0.40)";   // red   — stop zone
+  if(dist<=warnMm) return "rgba(230,200,0,0.40)";   // yellow — warning zone
+  return "rgba(30,185,90,0.40)";                     // green  — detection zone
+}
+function _computeHeatPlane(plane){
+  const pct=project.view.doorPct, side=project.project.doorSide;
+  const openDeg=doorAngleForPercent(pct,project.door,side);
+  const step=gridCellMm;
+  const infos=[];
+  for(const s of project.sensors){
+    if(!s.active) continue;
+    const pose=sensorPoseAtAngle(s,project.door,openDeg,side);
+    const poly=sensorFovProject(s,project.door,openDeg,side,plane);
+    const sp = plane==="top"
+      ? {x:project.door.hingeX+s.posX, y:pose.x}
+      : {x:pose.x, y:pose.y};
+    infos.push({poly,sp,stopMm:s.stopMm,warnMm:s.warningMm,maxR:s.maxRangeMm});
+  }
+  if(!infos.length) return [];
+  let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+  for(const{sp,maxR}of infos){
+    x0=Math.min(x0,sp.x-maxR); x1=Math.max(x1,sp.x+maxR);
+    y0=Math.min(y0,sp.y-maxR); y1=Math.max(y1,sp.y+maxR);
+  }
+  x0=Math.floor(x0/step)*step; x1=Math.ceil(x1/step)*step;
+  y0=Math.floor(y0/step)*step; y1=Math.ceil(y1/step)*step;
+  const cells=[];
+  for(let wx=x0;wx<=x1;wx+=step){
+    for(let wy=y0;wy<=y1;wy+=step){
+      for(const{poly,sp,stopMm,warnMm,maxR}of infos){
+        if(!_pip(wx,wy,poly)) continue;
+        const d=Math.sqrt((wx-sp.x)**2+(wy-sp.y)**2);
+        const col=_heatCol(d,stopMm,warnMm,maxR);
+        if(col){ cells.push({wx,wy,color:col}); break; }
+      }
+    }
+  }
+  return cells;
+}
+function computeHeatmap(){
+  if(!project) return;
+  heatmapData={
+    front: _computeHeatPlane("front"),
+    top:   _computeHeatPlane("top")
+  };
+  render();
+}
+function clearHeatmap(){ heatmapData={}; render(); }
+function drawHeatmap(){
+  const cells=heatmapData[curPlane];
+  if(!cells||!cells.length) return;
+  const cellPx=gridCellMm*curView.zoom;
+  for(const c of cells){
+    const q=worldToScreen({x:c.wx,y:c.wy});
+    ctx.fillStyle=c.color;
+    ctx.fillRect(q.x-cellPx/2,q.y-cellPx/2,cellPx,cellPx);
+  }
+  // colour legend in top-right corner
+  const leg=[["rgba(220,50,50,0.8)","Stop zone"],["rgba(230,200,0,0.8)","Warning"],["rgba(30,185,90,0.8)","Detection"]];
+  const lx=W-130, ly=14;
+  leg.forEach(([col,lbl],i)=>{
+    ctx.fillStyle=col; ctx.fillRect(lx,ly+i*16,12,12);
+    ctx.fillStyle=cssVar("--ink"); ctx.font="10px sans-serif"; ctx.textAlign="left";
+    ctx.fillText(lbl, lx+16, ly+i*16+10);
+  });
+}
+
+/* ---- Proximity distances ---- */
+function obsAABB(o){
+  const hw=(o.width||60)/2, hd=(o.depth||200)/2;
+  return { x1:o.x-hd, x2:o.x+hd, y1:o.y-hw, y2:o.y+hw, z1:o.z, z2:o.z+(o.height||1000) };
+}
+function clampBox(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
+// Sensor world position at current door angle.
+function sensorWorldPos(s,openDeg,side){
+  const pose=sensorPoseAtAngle(s,project.door,openDeg,side);
+  return {x:project.door.hingeX+s.posX, y:pose.x, z:pose.y};
+}
+
+// Closest point on obstacle AABB to a 3D point; returns component deltas and total.
+function distPointToObs(pt, o){
+  const b=obsAABB(o);
+  const cx=clampBox(pt.x,b.x1,b.x2), cy=clampBox(pt.y,b.y1,b.y2), cz=clampBox(pt.z,b.z1,b.z2);
+  const dx=pt.x-cx, dy=pt.y-cy, dz=pt.z-cz;
+  return {dx:Math.round(dx), dy:Math.round(dy), dz:Math.round(dz),
+          dist:Math.round(Math.sqrt(dx*dx+dy*dy+dz*dz))};
+}
+
+// Minimum distance from door polygon (Y-Z plane) to obstacle AABB (Y-Z face).
+// Also returns X gap between door fore-aft extent and obstacle fore-aft extent.
+function distDoorToObs(o, openDeg, side){
+  const door=project.door;
+  const poly=doorPolygonAtAngle(door, openDeg, side); // [{x:Y, y:Z}, ...]
+  const b=obsAABB(o);
+  let minYZ=Infinity;
+  for(let i=0;i<poly.length;i++){
+    const a=poly[i], bv=poly[(i+1)%poly.length];
+    for(let t=0;t<=8;t++){
+      const f=t/8;
+      const py=a.x+(bv.x-a.x)*f, pz=a.y+(bv.y-a.y)*f;
+      const cy=clampBox(py,b.y1,b.y2), cz=clampBox(pz,b.z1,b.z2);
+      const d=Math.sqrt((py-cy)**2+(pz-cz)**2);
+      if(d<minYZ) minYZ=d;
+    }
+  }
+  const dX1=door.hingeX-(door.lengthMm||1000)/2, dX2=door.hingeX+(door.lengthMm||1000)/2;
+  const xGap=Math.max(0, Math.max(dX1,b.x1)-Math.min(dX2,b.x2));
+  return {dx:Math.round(xGap), dyz:Math.round(minYZ),
+          dist:Math.round(Math.sqrt(minYZ*minYZ+xGap*xGap))};
+}
+// Sweep the opening door and find the opening (% and angle) at which the door
+// first reaches the object (door→object distance = 0). If the door never
+// touches the object across its full travel, report the max open angle instead.
+function doorOpenBeforeContact(o){
+  const side=project.project.doorSide, door=project.door;
+  const maxDeg=Math.abs(doorAngleForPercent(100,door,side));
+  for(let pct=0; pct<=100.0001; pct+=0.5){
+    const od=doorAngleForPercent(pct,door,side);
+    if(distDoorToObs(o,od,side).dist<=0)
+      return {contact:true, pct:Math.round(pct*2)/2, deg:Math.abs(od)};
+  }
+  return {contact:false, pct:100, deg:maxDeg};
+}
+
+function updateDistPanel(){ renderDockTable(); }
+function removeTp(id){
+  project.testPoints=project.testPoints.filter(t=>t.id!==id);
+  renderSinglePointsList(); renderTpTable(); render();
+}
+function renameTp(tp, newId){
+  if(!newId||newId===(tp.displayId||tp.id)) return;
+  const field=tp.displayId!=null?"displayId":"id";
+  if(field==="id"&&project.testPoints.some(t=>t!==tp&&t.id===newId)){ alert("ID '"+newId+"' already in use."); renderSinglePointsList(); return; }
+  tp[field]=newId;
+  renderSinglePointsList(); render();
+}
+function renderSinglePointsList(){
+  const wrap=$("singlePointsList"); if(!wrap) return;
+  const pts=project.testPoints.filter(t=>!t.setId);
+  if(!pts.length){ wrap.innerHTML=""; return; }
+  wrap.innerHTML=`<table style="font-size:11px;width:100%;border-collapse:collapse">
+    <tr><th style="text-align:left;padding:2px 4px">ID</th><th style="text-align:right;padding:2px 4px">X</th>
+    <th style="text-align:right;padding:2px 4px">Y</th><th style="text-align:left;padding:2px 4px">Obs</th><th></th></tr>
+    ${pts.map(tp=>`<tr>
+      <td style="padding:2px 4px"><input value="${(tp.displayId||tp.id).replace(/"/g,'&quot;')}" style="width:70px;font-size:11px"
+        onchange="renameTp(project.testPoints.find(t=>t.id==='${tp.id}'),this.value.trim())"></td>
+      <td style="text-align:right;padding:2px 4px">${Math.round(tp.x)}</td>
+      <td style="text-align:right;padding:2px 4px">${Math.round(tp.y)}</td>
+      <td style="padding:2px 4px">${tp.obstacleId}</td>
+      <td style="padding:2px 4px"><button onclick="removeTp('${tp.id}')" style="font-size:10px;padding:0 4px;color:var(--red)">✕</button></td>
+    </tr>`).join("")}</table>`;
+}
+
+
+function copyResultsTable(){
+  const activeSensors=project.sensors.filter(s=>s.active);
+  const side=project.project.doorSide;
+  const sel=$("resultsObsSel");
+  const obsId=sel?sel.value:null;
+  const obs=obsId?project.obstacles.find(o=>o.id===obsId):null;
+  const pct=project.view.doorPct;
+  const ang=Math.round(doorAngleForPercent(pct,project.door,side));
+  const cols=["ID","Door open","Door dist"].concat(activeSensors.map(s=>s.id+" dist")).concat(["Comments"]);
+  const rows=[cols.join("\t")];
+  const sets=project.testSets||[];
+  const setPoints={};
+  const noSet=[];
+  project.testPoints.forEach(tp=>{
+    if(tp.setId)(setPoints[tp.setId]=setPoints[tp.setId]||[]).push(tp);
+    else noSet.push(tp);
+  });
+  function addRows(pts){
+    pts.forEach(tp=>{
+      const useObs=obs||project.obstacles.find(o=>o.id===tp.obstacleId);
+      const usePct=tp.doorPct!=null?tp.doorPct:pct;
+      const openDeg=doorAngleForPercent(usePct,project.door,side);
+      let cTxt="—", doorDist="—";
+      if(useObs){
+        const vObs={...useObs,x:tp.x,y:tp.y,z:tp.z};
+        const c=doorOpenBeforeContact(vObs);
+        cTxt=c.contact?c.pct+"% ("+Math.round(c.deg)+"°)":"No contact";
+        const dd=distDoorToObs(vObs,openDeg,side);
+        doorDist=dd.dist+"mm";
+      }
+      const sVals=activeSensors.map(s=>{
+        const sp=sensorWorldPos(s,openDeg,side);
+        const vObs2=useObs?{...useObs,x:tp.x,y:tp.y,z:tp.z}:null;
+        const b=vObs2?obsAABB(vObs2):null;
+        let d;
+        if(b){ const cx=clampBox(sp.x,b.x1,b.x2),cy=clampBox(sp.y,b.y1,b.y2),cz=clampBox(sp.z,b.z1,b.z2);
+          d=Math.round(Math.sqrt((sp.x-cx)**2+(sp.y-cy)**2+(sp.z-cz)**2));
+        } else d=Math.round(Math.sqrt((sp.x-tp.x)**2+(sp.y-tp.y)**2+(sp.z-tp.z)**2));
+        return d+"mm";
+      });
+      rows.push([(tp.displayId||tp.id),cTxt,doorDist,...sVals,(tp.comments||"")].join("\t"));
+    });
+  }
+  sets.forEach(s=>{
+    const pts=setPoints[s.id]||[];
+    rows.push(s.id+" ("+s.obsId+" X:"+s.xShift+" Y:"+s.yShift+"mm)");
+    addRows(pts);
+  });
+  if(noSet.length){
+    if(sets.length) rows.push("Manual points");
+    addRows(noSet);
+  }
+  rows.unshift("Door position: "+Math.round(pct)+"% ("+ang+"°)");
+  navigator.clipboard.writeText(rows.join("\n")).then(()=>{
+    const btn=document.querySelector("[onclick='copyResultsTable()']");
+    if(btn){ btn.textContent="Copied!"; setTimeout(()=>btn.textContent="Copy table",1500); }
+  });
+}
+// Door-open-before-contact with the obstacle placed at a test point location.
+function doorOpenAtPoint(tp){
+  const obs=project.obstacles.find(o=>o.id===tp.obstacleId);
+  if(!obs) return {contact:false,pct:100,deg:0};
+  const virtualObs={...obs, x:tp.x, y:tp.y, z:tp.z};
+  return doorOpenBeforeContact(virtualObs);
+}
+// Build one row of test-point data (shared by sidebar Results table and bottom dock).
+function tpRowHtml(tp, activeSensors, side, opts){
+  const obsOverride=opts&&opts.obs;
+  const doorPctOverride=opts&&opts.doorPct;
+  const obs=obsOverride||project.obstacles.find(o=>o.id===tp.obstacleId);
+  const usePct=doorPctOverride!=null?doorPctOverride:tp.doorPct;
+  const openDeg=doorAngleForPercent(usePct,project.door,side);
+  let cTxt="—", cCol="", doorDist="—", doorDistCol="";
+  if(obs){
+    const vObs={...obs, x:tp.x, y:tp.y, z:tp.z};
+    const c=doorOpenBeforeContact(vObs);
+    cCol=c.contact?"var(--red)":"var(--green)";
+    cTxt=c.contact?`${c.pct}% (${Math.round(c.deg)}°)`:`No contact`;
+    const dd=distDoorToObs(vObs,openDeg,side);
+    doorDist=dd.dist+"mm";
+    doorDistCol=dd.dist<=0?"var(--red)":dd.dist<=100?"var(--yellow)":"var(--green)";
+  }
+  let sensorCols="";
+  const vObs2=obs?{...obs, x:tp.x, y:tp.y, z:tp.z}:null;
+  const b=vObs2?obsAABB(vObs2):null;
+  activeSensors.forEach(s=>{
+    const sp=sensorWorldPos(s,openDeg,side);
+    let sDist;
+    if(b){
+      const cx=clampBox(sp.x,b.x1,b.x2), cy=clampBox(sp.y,b.y1,b.y2), cz=clampBox(sp.z,b.z1,b.z2);
+      sDist=Math.round(Math.sqrt((sp.x-cx)**2+(sp.y-cy)**2+(sp.z-cz)**2));
+    } else {
+      sDist=Math.round(Math.sqrt((sp.x-tp.x)**2+(sp.y-tp.y)**2+(sp.z-tp.z)**2));
+    }
+    const col=sDist<=(s.stopMm||300)?"var(--red)":sDist<=(s.warningMm||800)?"var(--yellow)":"var(--green)";
+    sensorCols+=`<td style="text-align:right;color:${col}">${sDist}mm</td>`;
+  });
+  return `<td>${tp.displayId||tp.id}</td>
+    <td style="color:${cCol}" title="${cTxt==='—'?'No obstacle selected':''}">${cTxt}</td>
+    <td style="text-align:right;color:${doorDistCol}">${doorDist}</td>
+    ${sensorCols}`;
+}
+function tpHeaderHtml(activeSensors){
+  let h=`<tr><th>ID</th><th title="Door angle when door contacts obstacle at this point">Door open</th>
+    <th style="text-align:right" title="Distance from door to obstacle at current door position">Door dist</th>`;
+  activeSensors.forEach(s=>{ h+=`<th style="text-align:right" title="${s.id} distance (mm)">${s.id} dist</th>`; });
+  return h;
+}
+// Full table in sidebar Results panel.
+function renderTpTable(){
+  const activeSensors=project.sensors.filter(s=>s.active);
+  const side=project.project.doorSide;
+  const sel=$("resultsObsSel");
+  if(sel){
+    const prev=sel.value;
+    sel.innerHTML=project.obstacles.map(o=>`<option value="${o.id}">${o.id} (${o.type})</option>`).join("");
+    if(prev && project.obstacles.find(o=>o.id===prev)) sel.value=prev;
+  }
+  const obsId=sel?sel.value:null;
+  const obs=obsId?project.obstacles.find(o=>o.id===obsId):null;
+  const doorAngleEl=$("resultsDoorAngle");
+  if(doorAngleEl){
+    const pct=project.view.doorPct;
+    const ang=Math.round(doorAngleForPercent(pct,project.door,side));
+    doorAngleEl.textContent=`Door position: ${Math.round(pct)}% (${ang}°)`;
+  }
+  const head=$("resultsHead");
+  const nCols=3+activeSensors.length+2;
+  if(head) head.innerHTML=tpHeaderHtml(activeSensors)+`<th>Comments</th><th></th></tr>`;
+  const body=$("resultsBody"); if(!body) return; body.innerHTML="";
+  const sets=project.testSets||[];
+  const setPoints={};
+  const noSet=[];
+  project.testPoints.forEach(tp=>{
+    if(tp.setId){ (setPoints[tp.setId]=setPoints[tp.setId]||[]).push(tp); }
+    else noSet.push(tp);
+  });
+  function appendPoints(pts, editable){
+    pts.forEach(tp=>{
+      const tr=document.createElement("tr");
+      if(tp.blind) tr.className="blind";
+      tr.innerHTML=tpRowHtml(tp,activeSensors,side,{obs:obs})
+        +`<td><input data-k="comments" value="${(tp.comments||"").replace(/"/g,'&quot;')}" style="width:120px"></td>`
+        +`<td><button onclick="removeTp('${tp.id}')">✕</button></td>`;
+      tr.querySelector("[data-k='comments']").addEventListener("input",e=>tp.comments=e.target.value);
+      body.appendChild(tr);
+    });
+  }
+  sets.forEach(s=>{
+    const pts=setPoints[s.id]||[];
+    const pass=pts.filter(t=>t.result==="PASS").length;
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td colspan="${nCols}" style="background:var(--panel2);font-size:11px;font-weight:600;padding:6px 8px">
+      ${s.id} <span style="font-weight:400;color:var(--muted)">(${pts.length} pts · ${s.obsId} · X:${s.xShift>0?"+":""}${s.xShift} Y:${s.yShift>0?"+":""}${s.yShift}mm · ${pass}/${pts.length} pass)</span>
+      <button onclick="deleteTestSet('${s.id}')" style="float:right;font-size:10px;padding:1px 8px;color:var(--red)">Delete set</button></td>`;
+    body.appendChild(tr);
+    appendPoints(pts);
+  });
+  if(noSet.length){
+    if(sets.length){
+      const tr=document.createElement("tr");
+      tr.innerHTML=`<td colspan="${nCols}" style="background:var(--panel2);font-size:11px;font-weight:600;padding:6px 8px">Manual points <span style="font-weight:400;color:var(--muted)">(${noSet.length} pts)</span></td>`;
+      body.appendChild(tr);
+    }
+    appendPoints(noSet);
+  }
+  renderDockTable();
+}
+// Bottom dock: show only the test point(s) at the obstacle's current position.
+function renderDockTable(){
+  const activeSensors=project.sensors.filter(s=>s.active);
+  const side=project.project.doorSide;
+  const head=$("dockHead");
+  if(head) head.innerHTML=tpHeaderHtml(activeSensors)+`</tr>`;
+  const body=$("dockBody2"); if(!body) return; body.innerHTML="";
+  const title=$("dockTitle");
+  const matched=[];
+  for(const o of project.obstacles){
+    for(const tp of project.testPoints){
+      if(tp.obstacleId===o.id && Math.abs(tp.x-o.x)<2 && Math.abs(tp.y-o.y)<2)
+        matched.push({tp,obs:o});
+    }
+  }
+  const doorAngle=Math.round(doorAngleForPercent(project.view.doorPct,project.door,side));
+  if(title) title.innerHTML=matched.length
+    ?`<strong>Current: ${matched.map(m=>m.tp.displayId||m.tp.id).join(", ")}</strong> <span style="color:var(--gray);font-size:10px;margin-left:8px">Door position: ${Math.round(project.view.doorPct)}% (${doorAngle}°)</span>`
+    :`<strong>Move obstacle to a test point to see results</strong>`;
+  matched.forEach(m=>{
+    const tr=document.createElement("tr");
+    if(m.tp.blind) tr.className="blind";
+    tr.innerHTML=tpRowHtml(m.tp,activeSensors,side,{obs:m.obs,doorPct:project.view.doorPct});
+    body.appendChild(tr);
+  });
+}
+
+
+/* ====================== 5b. COVERAGE ZONES UI ====================== */
+function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g,
+  c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function coverColor(pct){ return pct>=80?"var(--green)":pct>=50?"var(--yellow)":"var(--red)"; }
+function sparkline(vals){ const bars="▁▂▃▄▅▆▇█";
+  return vals.map(v=>bars[Math.min(7,Math.max(0,Math.round(v/100*7)))]).join(""); }
+
+let coverageCache=null;
+function recomputeCoverage(){
+  const g=$("z_grid"); if(g){ const v=parseFloat(g.value); if(v>=20){
+    project.overlap=project.overlap||{}; project.overlap.gridMm=v; } }
+  coverageCache=coverageMetrics(project,{});
+  renderZonePanel(); render(); return coverageCache;
+}
+// Recompute the worst/mean labels in-place (no rebuild → typing keeps focus).
+function updateZoneStats(){
+  const m=coverageMetrics(project,{}); coverageCache=m;
+  for(const z of project.zones){
+    const el=$("zstat_"+z.id); if(!el) continue;
+    const cm=m[z.id]||{worst:0,mean:0,total:0,perPos:[]};
+    el.innerHTML=cm.total
+      ? `worst <b style="color:${coverColor(cm.worst)}">${cm.worst.toFixed(0)}%</b>`
+        +` · mean <b>${cm.mean.toFixed(0)}%</b>`
+        +` <span style="letter-spacing:1px;color:var(--muted)" title="coverage across door 0→100%">${sparkline(cm.perPos.map(p=>p.cov))}</span>`
+      : `<span style="color:var(--muted)">no samples in band</span>`;
+  }
+}
+function addZone(){
+  const i=project.zones.length;
+  project.zones.push({ id:"Z"+Date.now().toString(36), name:"Zone "+(i+1),
+    color:ZONE_PALETTE[i%ZONE_PALETTE.length], yNear:0, yFar:1500, zLow:0, zHigh:1500,
+    visible:true, weight:1 });
+  coverageCache=null; renderZonePanel(); render();
+}
+function renderZonePanel(){
+  const g=$("z_grid"); if(g && document.activeElement!==g)
+    g.value=(project.overlap&&project.overlap.gridMm)||60;
+  const host=$("zoneList"); if(!host) return; host.innerHTML="";
+  project.zones.forEach((z,idx)=>{
+    const div=document.createElement("div"); div.className="group";
+    div.innerHTML=`
+      <span class="group-cap" style="color:${z.color}">${escapeHtml(z.name)}</span>
+      <div class="row" style="align-items:center;margin-bottom:6px">
+        <label class="mini" style="display:flex;align-items:center;gap:4px">
+          <input type="checkbox" data-zk="visible" ${z.visible?"checked":""}> show</label>
+        <span style="flex:1"></span>
+        <span class="mini" id="zstat_${z.id}"></span>
+      </div>
+      <div class="row">
+        <div class="field"><label>Name</label><input data-zk="name" value="${escapeHtml(z.name)}"></div>
+        <div class="field" style="max-width:74px"><label>Weight</label>
+          <input data-zk="weight" type="number" min="0" step="0.5" value="${z.weight||1}"></div>
+        <div class="field" style="max-width:44px"><label>Colour</label>
+          <input data-zk="color" type="color" value="${z.color}" style="padding:1px;height:28px"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Out near (mm)</label><input data-zk="yNear" type="number" value="${z.yNear}"></div>
+        <div class="field"><label>Out far (mm)</label><input data-zk="yFar" type="number" value="${z.yFar}"></div>
+      </div>
+      <div class="row" style="align-items:flex-end">
+        <div class="field"><label>Z low (mm)</label><input data-zk="zLow" type="number" value="${z.zLow}"></div>
+        <div class="field"><label>Z high (mm)</label><input data-zk="zHigh" type="number" value="${z.zHigh}"></div>
+        <button data-zdel="1" style="font-size:10px;padding:5px 8px;margin-bottom:9px">Delete</button>
+      </div>`;
+    div.querySelectorAll("[data-zk]").forEach(inp=>{
+      const k=inp.dataset.zk;
+      const ev=(inp.type==="checkbox"||inp.type==="color")?"change":"input";
+      inp.addEventListener(ev,()=>{
+        if(k==="visible") z.visible=inp.checked;
+        else if(k==="name"||k==="color"){ z[k]=inp.value;
+          if(k==="color"){ const cap=div.querySelector(".group-cap");
+            if(cap) cap.style.color=inp.value; } }
+        else z[k]=parseFloat(inp.value)||0;
+        coverageCache=null; updateZoneStats(); render();
+      });
+    });
+    div.querySelector("[data-zdel]").addEventListener("click",()=>{
+      project.zones.splice(idx,1); coverageCache=null; renderZonePanel(); render();
+    });
+    host.appendChild(div);
+  });
+  const add=document.createElement("button");
+  add.textContent="+ Add zone"; add.className="primary";
+  add.onclick=addZone; host.appendChild(add);
+  updateZoneStats();
+}
+
+/* ====================== 5c. COMPARE LAYOUTS ====================== */
+let compareData={A:null,B:null};
+let compareOverlayOn=false;
+// Door-geometry signature: the fields whose change would make two coverage
+// numbers incomparable. Sensors are deliberately excluded — that is what varies.
+function doorSignature(cfg){
+  const d=cfg.door||{};
+  return JSON.stringify({ side:cfg.project.doorSide,
+    hingeX:d.hingeX, hingeY:d.hingeY, hingeZ:d.hingeZ,
+    heightMm:d.heightMm, lengthMm:d.lengthMm, maxOpenDeg:d.maxOpenDeg,
+    baseAngleDeg:d.baseAngleDeg, profile:d.profile, positionsPct:d.positionsPct });
+}
+function loadCompareFile(which){
+  const inp=document.createElement("input"); inp.type="file";
+  inp.accept=".json,application/json";
+  inp.onchange=()=>{ const f=inp.files[0]; if(!f) return;
+    const rd=new FileReader();
+    rd.onload=()=>{ try{
+      const cfg=normalizeLoaded(JSON.parse(rd.result));
+      compareData[which]=cfg;
+      $("cmp"+which+"Name").textContent=f.name+" — "+(cfg.project.name||"(unnamed)")
+        +" · "+cfg.sensors.length+" sensors";
+      $("cmpStatus").textContent="";
+    }catch(e){ alert("Invalid JSON: "+e.message); } };
+    rd.readAsText(f); };
+  inp.click();
+}
+function useCurrentAsCompare(which){
+  compareData[which]=normalizeLoaded(JSON.parse(JSON.stringify(project)));
+  $("cmp"+which+"Name").textContent="(current project) — "
+    +(project.project.name||"(unnamed)")+" · "+project.sensors.length+" sensors";
+  $("cmpStatus").textContent="";
+}
+function renderComparePanel(){
+  ["A","B"].forEach(w=>{ const c=compareData[w], el=$("cmp"+w+"Name");
+    if(el && c && !el.textContent) el.textContent=(c.project.name||"(unnamed)")
+      +" · "+c.sensors.length+" sensors"; });
+}
+function runCompare(){
+  const A=compareData.A, B=compareData.B, st=$("cmpStatus");
+  if(!A||!B){ st.style.color="var(--red)";
+    st.textContent="Load both Config A and Config B first."; return; }
+  if(doorSignature(A)!==doorSignature(B)){ st.style.color="var(--red)";
+    st.textContent="✗ Door geometry differs between A and B — coverage is not "
+      +"comparable. The two files must share the same door (side, hinge, profile, "
+      +"max-open, positions) and differ only in sensors.";
+    $("cmpResult").innerHTML=""; compareOverlayOn=false; render(); return; }
+  if(!project.zones || !project.zones.length){ st.style.color="var(--red)";
+    st.textContent="Define at least one coverage zone (Zones tab) first."; return; }
+  st.style.color="var(--accent)"; st.textContent="✓ Door matches — compared on "
+    +project.zones.length+" zone(s), grid "+((project.overlap&&project.overlap.gridMm)||60)+" mm.";
+  const opts={ zones:project.zones, gridMm:(project.overlap&&project.overlap.gridMm)||60,
+    positions:project.door.positionsPct };
+  const mA=coverageMetrics(A,opts), mB=coverageMetrics(B,opts);
+  renderCompareTable(mA,mB);
+  compareOverlayOn=true; render();
+}
+function renderCompareTable(mA,mB){
+  const rows=project.zones.map(z=>{
+    const a=mA[z.id]||{worst:0,mean:0,total:0}, b=mB[z.id]||{worst:0,mean:0,total:0};
+    const d=b.worst-a.worst;
+    const dCol=Math.abs(d)<0.5?"var(--muted)":d>0?"var(--green)":"var(--red)";
+    const sign=d>0?"+":"";
+    return `<tr>
+      <td style="color:${z.color}">${escapeHtml(z.name)}</td>
+      <td style="text-align:right;color:${coverColor(a.worst)}">${a.total?a.worst.toFixed(0):"—"}%</td>
+      <td style="text-align:right;color:${coverColor(b.worst)}">${b.total?b.worst.toFixed(0):"—"}%</td>
+      <td style="text-align:right;color:${dCol};font-weight:600">${a.total?sign+d.toFixed(0):"—"}</td>
+      <td style="text-align:right;color:var(--muted)">${a.total?a.mean.toFixed(0):"—"} / ${b.total?b.mean.toFixed(0):"—"}</td>
+    </tr>`; }).join("");
+  const sA=coverageScore(mA), sB=coverageScore(mB), sd=sB-sA;
+  const sdCol=Math.abs(sd)<0.5?"var(--muted)":sd>0?"var(--green)":"var(--red)";
+  const verdict = sd>0.5?`Config B is better by ${sd.toFixed(0)} pts (weighted worst-case).`
+    : sd<-0.5?`Config A is better by ${(-sd).toFixed(0)} pts (weighted worst-case).`
+    : "A and B are effectively tied.";
+  $("cmpResult").innerHTML=`
+    <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:8px">
+      <thead><tr style="color:var(--muted)">
+        <th style="text-align:left">Zone</th>
+        <th style="text-align:right">A worst</th>
+        <th style="text-align:right">B worst</th>
+        <th style="text-align:right">Δ (B−A)</th>
+        <th style="text-align:right">mean A/B</th></tr></thead>
+      <tbody>${rows}
+        <tr style="border-top:1px solid var(--line);font-weight:600">
+          <td>Weighted score</td>
+          <td style="text-align:right">${sA.toFixed(0)}</td>
+          <td style="text-align:right">${sB.toFixed(0)}</td>
+          <td style="text-align:right;color:${sdCol}">${(sd>0?"+":"")+sd.toFixed(0)}</td>
+          <td></td></tr>
+      </tbody>
+    </table>
+    <p class="mini" style="margin:8px 0 4px;color:var(--ink)"><b>${verdict}</b></p>
+    <label class="mini" style="display:flex;align-items:center;gap:5px">
+      <input type="checkbox" id="cmpOverlayCb" ${compareOverlayOn?"checked":""}
+        onchange="compareOverlayOn=this.checked;render()">
+      Overlay A (dashed) vs B (solid) FOVs on the Front view</label>
+    <p class="mini" style="color:var(--muted)">Worst = lowest coverage across all door
+      positions (the safety-relevant figure). Δ &gt; 0 means B covers more.</p>`;
+}
+// Draw both compared layouts' active FOVs at the current door position (front view).
+function drawCompareOverlay(){
+  if(!compareOverlayOn || curPlane!=="front" || !compareData.A || !compareData.B) return;
+  const side=project.project.doorSide;
+  const od=doorAngleForPercent(project.view.doorPct,project.door,side);
+  const paint=(cfg,stroke,dash)=>{
+    ctx.save(); ctx.setLineDash(dash); ctx.strokeStyle=stroke; ctx.lineWidth=1.6;
+    cfg.sensors.filter(s=>s.active && s.showFov!==false).forEach(s=>{
+      const poly=sensorFovProject(s,cfg.door,od,side,"front");
+      if(poly.length>=3){ polyPath(poly); ctx.stroke(); } });
+    ctx.restore();
+  };
+  paint(compareData.A, "#e3b341", [6,4]); // A dashed amber
+  paint(compareData.B, "#4da3ff", []);    // B solid blue
+  // legend
+  const lx=14, ly=H-40;
+  ctx.font="11px sans-serif"; ctx.textAlign="left";
+  ctx.strokeStyle="#e3b341"; ctx.setLineDash([6,4]); ctx.lineWidth=1.6;
+  ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(lx+22,ly); ctx.stroke();
+  ctx.setLineDash([]); ctx.fillStyle=cssVar("--ink"); ctx.fillText("Config A", lx+28, ly+4);
+  ctx.strokeStyle="#4da3ff"; ctx.beginPath(); ctx.moveTo(lx,ly+16); ctx.lineTo(lx+22,ly+16); ctx.stroke();
+  ctx.fillText("Config B", lx+28, ly+20);
+}
+
+/* ====================== 6. IMPORT / EXPORT ====================== */
+function download(name,content,type){
+  const blob=new Blob([content],{type:type||"text/plain"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function exportJson(){
+  download((project.project.name||"project").replace(/\s+/g,"_")+".json",
+    JSON.stringify(project,null,2),"application/json");
+}
+// Normalize a parsed JSON object into a fully-formed project (backfilling
+// derived fields), shared by project open and Config-B comparison load.
+function normalizeLoaded(data){
+  const pj = Object.assign(defaultProject(), data); // preserve unknown fields
+  pj.project = Object.assign(defaultProject().project, data.project||{});
+  pj.door = Object.assign(defaultProject().door, data.door||{});
+  pj.timing = Object.assign(defaultProject().timing, data.timing||{});
+  pj.eval = Object.assign(defaultProject().eval, data.eval||{});
+  // Map regions: backfill per-region defaults for forward/backward compatibility.
+  pj.regions = Array.isArray(data.regions) ? data.regions.map((r,i)=>Object.assign(
+    { id:"R"+(i+1), name:"Region "+(i+1), color:REGION_PALETTE[i%REGION_PALETTE.length],
+      points:[], fill:true, opacity:0.25, visible:true },
+    r, { points:Array.isArray(r&&r.points)?r.points:[] })) : [];
+  // Coverage zones: backfill per-zone defaults; fall back to defaults if absent.
+  pj.zones = Array.isArray(data.zones) && data.zones.length
+    ? data.zones.map((z,i)=>Object.assign(
+        { id:"Z"+(i+1), name:"Zone "+(i+1), color:ZONE_PALETTE[i%ZONE_PALETTE.length],
+          yNear:0, yFar:1500, zLow:0, zHigh:1500, visible:true, weight:1 }, z))
+    : defaultZones();
+  pj.view = Object.assign(defaultProject().view, data.view||{});
+  if(!["front","top","split","3d"].includes(pj.view.plane))
+    pj.view.plane="front";
+  // Per-plane view transforms (backfill; migrate legacy view.zoom/pan).
+  pj.viewFront = Object.assign(planeDefaults("front"), data.viewFront
+    || (data.view&&data.view.zoom!=null&&data.view.plane!=="top"
+        ?{zoom:data.view.zoom,panX:data.view.panX,panY:data.view.panY}:{}));
+  pj.viewTop = Object.assign(planeDefaults("top"), data.viewTop
+    || (data.view&&data.view.zoom!=null&&data.view.plane==="top"
+        ?{zoom:data.view.zoom,panX:data.view.panX,panY:data.view.panY}:{}));
+  pj.view3d = (data.view3d && Array.isArray(data.view3d.target) && typeof data.view3d.az==="number"
+    && typeof data.view3d.polar==="number")
+    ? data.view3d : defaultProject().view3d; // legacy shapes dropped
+  // Backward compat: old top-view (widthMm) projects had no wing profile.
+  if(!Array.isArray(pj.door.profile) || pj.door.profile.length<3){
+    const w=pj.door.widthMm||1000, t=(pj.door.thicknessMm||60)/2;
+    pj.door.profile=[{y:0,z:-t},{y:-w,z:-t},{y:-w,z:t},{y:0,z:t}];
+    if(pj.door.hingeZ==null) pj.door.hingeZ=1500;
+  }
+  return pj;
+}
+function importJson(){
+  const inp=document.createElement("input"); inp.type="file"; inp.accept=".json,application/json";
+  inp.onchange=()=>{ const f=inp.files[0]; if(!f)return;
+    const rd=new FileReader();
+    rd.onload=()=>{ try{
+        project = normalizeLoaded(JSON.parse(rd.result));
+        regionMode=null; activeRegionId=null; regionDragVtx=null; regionMoveDrag=null;
+        seq={s:project.sensors.length,o:project.obstacles.length,t:project.testPoints.length,
+          r:project.regions.reduce((m,x)=>Math.max(m,parseInt(String(x.id).replace(/\D/g,""))||0),0)};
+        loadAllUi(); recomputeAll(); render();
+      }catch(e){ alert("Invalid JSON: "+e.message); } };
+    rd.readAsText(f); };
+  inp.click();
+}
+function exportCsv(){
+  const cols=["Test_Point_ID","Sensor_ID","Door_Position_Percent","Obstacle_Type",
+    "Obstacle_X_mm","Obstacle_Y_mm","Obstacle_Z_mm","In_FOV","Blind_Zone",
+    "N_Reps","Detection_Rate_pct","Mean_Distance_mm","Result","Comments"];
+  const rows=[cols.join(",")];
+  for(const tp of project.testPoints){
+    const obs=project.obstacles.find(o=>o.id===tp.obstacleId);
+    const st=tpStats(tp);
+    const line=[tp.id, tp.sensorId||"", tp.doorPct, obs?obs.type:"",
+      Math.round(tp.x), Math.round(tp.y), Math.round(tp.z),
+      tp.inFov?"YES":"NO", tp.blind?"YES":"NO",
+      st?st.n:"", st?st.rate.toFixed(1):"", st&&st.meanMm!=null?Math.round(st.meanMm):"",
+      tp.result, '"'+(tp.comments||"").replace(/"/g,'""')+'"'];
+    rows.push(line.join(","));
+  }
+  download((project.project.name||"testmatrix").replace(/\s+/g,"_")+"_testmatrix.csv",
+    rows.join("\n"),"text/csv");
+}
+function exportPng(){
+  const save=b=>{ const a=document.createElement("a");
+    a.href=URL.createObjectURL(b); a.download="fov_view.png"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1000); };
+  if(project.view.plane==="split"){
+    // stitch the Front and Top panes side-by-side
+    const c1=cvEl, c2=cv2El, gap=1;
+    const tmp=document.createElement("canvas");
+    tmp.width=c1.width+c2.width+gap; tmp.height=Math.max(c1.height,c2.height);
+    const t=tmp.getContext("2d");
+    paintBg(t,tmp.width,tmp.height);
+    t.drawImage(c1,0,0); t.drawImage(c2,c1.width+gap,0);
+    tmp.toBlob(save);
+    return;
+  }
+  cvEl.toBlob(save);
+}
+/* ====================== 7. INIT / EVENTS ====================== */
+function loadAllUi(){
+  loadProjectFields(); loadDoorFields();
+  renderSensorList(); renderObstacleList(); refreshObstacleSelect();
+  renderSinglePointsList(); renderTpTable(); renderRegionList();
+  $("doorPct").value=project.view.doorPct;
+  $("viewPlane").value=project.view.plane||"front";
+  updateDoorImageUi();
+  updateDoorPctLabel();
+}
+function updateDoorPctLabel(){
+  const pct=project.view.doorPct;
+  $("doorPctVal").textContent=pct.toFixed(0)+"%";
+  const ang=doorAngleForPercent(pct,project.door,project.project.doorSide);
+  const inp=$("doorAngInput"); if(inp && document.activeElement!==inp) inp.value=ang.toFixed(1);
+  const t=(project.door.openTimeS||0)*pct/100;
+  $("doorTimeVal").textContent="  t="+t.toFixed(2)+"s";
+}
+// Bottom dock: collapse to just its header bar so the canvas area grows.
+function toggleBottomDock(){
+  const dock=$("resultsSection"), body=$("dockBody"), btn=$("dockHideBtn"); if(!dock||!body) return;
+  const hidden=body.style.display==="none";
+  body.style.display=hidden?"":"none";
+  dock.style.height=hidden?"":"auto";
+  if(btn) btn.textContent=hidden?"Hide":"Show";
+  render(); // refit canvas to the reclaimed space
+}
+function toggleProxLines(){
+  const cb=$("showProxLines"); if(!cb) return;
+  cb.checked=!cb.checked;
+  const btn=$("proxToggleBtn"); if(btn) btn.textContent="Prox lines: "+(cb.checked?"ON":"OFF");
+  render();
+}
+function newProject(){
+  if(!confirm("Start a new project? Unsaved data will be lost.")) return;
+  project=defaultProject(); seq={s:1,o:1,t:0,r:0};
+  regionMode=null; activeRegionId=null; regionDragVtx=null; regionMoveDrag=null;
+  loadAllUi(); recomputeAll(); render();
+}
+function resizeCanvas(){ render(); }
+// The {plane, view} shown by a given canvas element (accounts for split).
+function paneInfo(canvas){
+  if(project.view.plane==="split")
+    return canvas===cv2El ? {plane:"top",view:project.viewTop}
+                          : {plane:"front",view:project.viewFront};
+  const pl=project.view.plane;
+  return {plane:pl, view: pl==="top"?project.viewTop:project.viewFront};
+}
+function resetView(){
+  const plane=project.view.plane;
+  if(plane==="split"||plane==="front") project.viewFront=planeDefaults("front");
+  if(plane==="split"||plane==="top")   project.viewTop=planeDefaults("top");
+  if(plane==="3d") fit3d(true);
+  render();
+}
+function setViewPlane(plane){ pauseAnim(); project.view.plane=plane;
+  if(plane==="3d"){ render(); fit3d(true); } render(); }
+
+let drag=null;
+// OrbitControls-style damping: pointer deltas accumulate into orbitVel
+// (sphericalDelta); a rAF loop applies orbitVel·f each frame then decays it, so
+// motion eases in and glides out (total applied == input). No roll (world-up Z).
+let orbitVel={az:0,polar:0}, loop3d=false, dragging3d=false, dirty3d=false;
+const DAMP3D=0.15, ROT3D=0.009;
+function tick3d(){
+  if(project.view.plane!=="3d"){ loop3d=false; return; }
+  const v=project.view3d; let moved=false;
+  if(Math.abs(orbitVel.az)>1e-5 || Math.abs(orbitVel.polar)>1e-5){
+    v.az += orbitVel.az*DAMP3D; v.polar += orbitVel.polar*DAMP3D;
+    v.polar=Math.max(0.02,Math.min(Math.PI-0.02, v.polar));
+    orbitVel.az*=(1-DAMP3D); orbitVel.polar*=(1-DAMP3D); moved=true;
+  }
+  if(moved || dirty3d){ dirty3d=false; render(); }
+  if(moved || dragging3d) requestAnimationFrame(tick3d); else loop3d=false;
+}
+function start3dLoop(){ dirty3d=true; if(!loop3d){ loop3d=true; requestAnimationFrame(tick3d); } }
+function bindCanvas(){
+  [cvEl,cv2El].forEach(canvas=>{
+    canvas.addEventListener("contextmenu",e=>{
+      if(project.view.plane==="3d"){ e.preventDefault(); return; }
+      if(regionMode==="edit" && onRegionRightClick(canvas,e)) e.preventDefault();
+    });
+    canvas.addEventListener("wheel",e=>{ e.preventDefault();
+      if(project.view.plane==="3d"){ zoom3dToCursor(canvas,e); return; }
+      const v=paneInfo(canvas).view, f=e.deltaY<0?1.1:1/1.1;
+      v.zoom=Math.max(0.01,Math.min(2,v.zoom*f)); render();
+    },{passive:false});
+    canvas.addEventListener("mousedown",e=>onCanvasDown(canvas,e));
+    canvas.addEventListener("click",e=>onRegionClick(canvas,e));
+    canvas.addEventListener("dblclick",e=>onRegionDblClick(canvas,e));
+  });
+  window.addEventListener("mousemove",e=>{
+    if(regionDragVtx){                                    // drag a region corner
+      const canvas=topCanvas();
+      if(project.view.plane==="top"||project.view.plane==="split"){
+        const {rect}=useTopPane(canvas);
+        const w=screenToWorld(e.clientX-rect.left, e.clientY-rect.top);
+        regionDragVtx.r.points[regionDragVtx.i]={x:Math.round(w.x), y:Math.round(w.y)};
+        render();
+      }
+      return;
+    }
+    if(regionMoveDrag){                                   // translate the whole region
+      const canvas=topCanvas();
+      if(project.view.plane==="top"||project.view.plane==="split"){
+        const {rect}=useTopPane(canvas);
+        const w=screenToWorld(e.clientX-rect.left, e.clientY-rect.top);
+        const dx=w.x-regionMoveDrag.start.x, dy=w.y-regionMoveDrag.start.y;
+        regionMoveDrag.r.points=regionMoveDrag.orig.map(p=>({x:Math.round(p.x+dx), y:Math.round(p.y+dy)}));
+        render();
+      }
+      return;
+    }
+    if(!drag)return;
+    if(drag.mode==="orbit3d"){ orbitVel.az -= (e.clientX-drag.x)*ROT3D;
+      orbitVel.polar -= (e.clientY-drag.y)*ROT3D; drag.x=e.clientX; drag.y=e.clientY;
+      start3dLoop(); return; }
+    if(drag.mode==="pan3d"){ pan3d(e.clientX-drag.x, e.clientY-drag.y);
+      drag.x=e.clientX; drag.y=e.clientY; render(); return; }
+    drag.view.panX=drag.px+(e.clientX-drag.x);
+    drag.view.panY=drag.py+(e.clientY-drag.y); render();
+  });
+  window.addEventListener("mouseup",()=>{ drag=null; dragging3d=false;
+    if(regionDragVtx){ regionDragVtx=null; renderRegionList(); }
+    if(regionMoveDrag){ regionMoveDrag=null; renderRegionList(); } });
+}
+function pan3d(dx,dy){
+  const v=project.view3d, b=cam3Basis(), wpp=v.dist/cam3f();
+  v.target=V.add(v.target, V.add(V.scale(b.u, -dx*wpp), V.scale(b.v, dy*wpp)));
+}
+function zoom3dToCursor(canvas,e){
+  const v=project.view3d, b=cam3Basis(), r=canvas.getBoundingClientRect();
+  const cxr=(e.clientX-r.left)-W/2, cyr=-((e.clientY-r.top)-H/2);
+  const k=e.deltaY<0?1/1.1:1.1;
+  const wx=cxr*v.dist/cam3f(), wy=cyr*v.dist/cam3f();
+  v.dist=Math.max(500,Math.min(40000, v.dist*k));
+  v.target=V.add(v.target, V.add(V.scale(b.u, wx*(1-k)), V.scale(b.v, wy*(1-k)))); // keep cursor point fixed
+  render();
+}
+// Nearest test point to a screen position in the 3D view (prefers the P1–P21
+// door-zone set; falls back to any test point). Returns the test point or null.
+function nearestTestPointScreen(sx,sy){
+  let pts=project.testPoints.filter(t=>/^P\d+$/.test(t.id));
+  if(!pts.length) pts=project.testPoints;
+  let best=null,bd=Infinity;
+  for(const tp of pts){
+    const q=project3D({x:tp.x,y:tp.y,z:tp.z});
+    const d=(q.x-sx)**2+(q.y-sy)**2;
+    if(d<bd){ bd=d; best=tp; }
+  }
+  return best;
+}
+function onCanvasDown(canvas,e){
+  regionDownScreen={x:e.clientX, y:e.clientY};   // for click-vs-drag in draw mode
+  if(project.view.plane==="3d"){
+    // Move-obstacle mode: left-click snaps the selected object to the nearest
+    // of the 21 test points (same object motion as top view, but in 3D).
+    if($("moveObs") && $("moveObs").checked && e.button===0 && !e.shiftKey){
+      const o=project.obstacles.find(x=>x.id===$("moveObsSel").value);
+      if(o){
+        const r=canvas.getBoundingClientRect();
+        W=r.width; H=r.height; cur3B=cam3Basis();
+        const tp=nearestTestPointScreen(e.clientX-r.left, e.clientY-r.top);
+        if(tp){ o.x=tp.x; o.y=tp.y; renderObstacleList(); refreshMoveObsSelect(); render(); }
+      }
+      return;
+    }
+    if(e.button===2 || e.shiftKey){ drag={mode:"pan3d", x:e.clientX, y:e.clientY}; }
+    else { drag={mode:"orbit3d", x:e.clientX, y:e.clientY}; dragging3d=true; start3dLoop(); }
+    return;
+  }
+  const info=paneInfo(canvas);
+  // ---- Map-region interaction (top view) ----
+  if(regionMode==="edit" && info.plane==="top" && e.button===0){
+    const r=activeRegion();
+    if(r){ useTopPane(canvas); const rect=canvas.getBoundingClientRect();
+      const hit=regionHit(r, e.clientX-rect.left, e.clientY-rect.top);
+      if(hit && hit.type==="vertex"){ regionDragVtx={r, i:hit.i}; return; }
+      if(hit && hit.type==="edge"){ r.points.splice(hit.i+1,0,hit.point);
+        regionDragVtx={r, i:hit.i+1}; renderRegionList(); render(); return; }
+    }
+    // no corner/edge under cursor → pan (don't add a test point while editing)
+    drag={x:e.clientX,y:e.clientY,view:info.view,px:info.view.panX,py:info.view.panY};
+    return;
+  }
+  if(regionMode==="move" && info.plane==="top" && e.button===0){
+    const r=activeRegion();
+    if(r && r.points.length){
+      const {rect}=useTopPane(canvas);
+      const w=screenToWorld(e.clientX-rect.left, e.clientY-rect.top);
+      // grab inside the area (or near it) → move the whole group; else pan
+      if(pointInPolygon(w, r.points) || regionHit(r, e.clientX-rect.left, e.clientY-rect.top)){
+        regionMoveDrag={ r, start:{x:w.x, y:w.y},
+          orig:r.points.map(p=>({x:p.x, y:p.y})) };
+        return;
+      }
+    }
+    drag={x:e.clientX,y:e.clientY,view:info.view,px:info.view.panX,py:info.view.panY};
+    return;
+  }
+  if(regionMode==="draw" && info.plane==="top"){    // pan-drag; corner added on click
+    drag={x:e.clientX,y:e.clientY,view:info.view,px:info.view.panX,py:info.view.panY};
+    return;
+  }
+  if($("clickAdd").checked){
+    const r=canvas.getBoundingClientRect();
+    W=r.width; H=r.height; curView=info.view; curPlane=info.plane;
+    const w=screenToWorld(e.clientX-r.left,e.clientY-r.top); // w.x=horiz, w.y=vert
+    if(info.plane==="top")
+      addTestPoint(Math.round(w.x), Math.round(w.y), 0, $("tp_obs").value);
+    else
+      addTestPoint(parseFloat($("tp_x").value)||0, Math.round(w.x), Math.round(w.y), $("tp_obs").value);
+    renderSinglePointsList();
+    return;
+  }
+  if($("moveObs") && $("moveObs").checked){
+    const obsId=$("moveObsSel").value;
+    const o=project.obstacles.find(x=>x.id===obsId);
+    if(o){
+      const r=canvas.getBoundingClientRect();
+      W=r.width; H=r.height; curView=info.view; curPlane=info.plane;
+      const w=screenToWorld(e.clientX-r.left,e.clientY-r.top);
+      // snap world coords to nearest grid cell centre
+      const snap=v=>Math.round(v/gridCellMm)*gridCellMm;
+      if(info.plane==="top"){ o.x=snap(w.x); o.y=snap(w.y); }
+      else { o.y=snap(w.x); o.z=snap(w.y); } // front view: horiz=Y, vert=Z
+      renderObstacleList(); refreshMoveObsSelect(); render();
+    }
+    return;
+  }
+  drag={x:e.clientX,y:e.clientY,view:info.view,px:info.view.panX,py:info.view.panY};
+}
+function bindToolbar(){
+  $("doorPct").addEventListener("input",()=>{
+    pauseAnim();
+    project.view.doorPct=parseFloat($("doorPct").value);
+    updateDoorPctLabel(); recomputeAll(); render(); refreshDoorPanels();
+  });
+  $("doorAngInput").addEventListener("change",()=>{
+    pauseAnim();
+    const ang=parseFloat($("doorAngInput").value)||0;
+    const maxDeg=project.door.maxOpenDeg||80;
+    const pct=Math.max(0,Math.min(100, Math.abs(ang)/maxDeg*100));
+    setDoorPct(pct);
+  });
+  ["showSwept","showGhost","showMeasured","showTpIds","showZones"].forEach(id=>$(id).addEventListener("change",()=>{recomputeAll();render();}));
+  $("viewPlane").addEventListener("change",()=>setViewPlane($("viewPlane").value));
+}
+
+/* ---- Animation (Phase 2). setInterval @50 Hz for reliable playback. ---- */
+let animTimer=null, animDir=0, animLast=0;
+function setDoorPct(pct){
+  pct=Math.max(0,Math.min(100,pct));
+  project.view.doorPct=pct;
+  $("doorPct").value=pct;
+  updateDoorPctLabel(); render(); refreshDoorPanels();
+}
+function animStep(dp){ pauseAnim(); setDoorPct(project.view.doorPct+dp); }
+function pauseAnim(){ if(animTimer){clearInterval(animTimer);animTimer=null;animDir=0;} }
+function playAnim(dir){
+  pauseAnim(); animDir=dir; animLast=Date.now();
+  animTimer=setInterval(()=>{
+    const now=Date.now(), dt=(now-animLast)/1000; animLast=now;
+    const timeS = animDir>0 ? (project.door.openTimeS||5) : (project.door.closeTimeS||5);
+    const spd=parseFloat($("animSpeed").value)||1;
+    let np=project.view.doorPct + dt/Math.max(0.1,timeS)*100*spd*animDir;
+    if(np>=100){ setDoorPct(100); pauseAnim(); return; }
+    if(np<=0){ setDoorPct(0); pauseAnim(); return; }
+    setDoorPct(np);
+  },20);
+}
+
+
+/* ---- §27 validation self-tests, wing-door front view (Y-Z) ---- */
+function runSelfTests(){
+  const approx=(a,b,t=1)=>Math.abs(a-b)<=t;
+  // Hinge at roof (Y=0, Z=1500). Door-local point 1000 mm straight down.
+  const d={hingeX:0,hingeY:0,hingeZ:1500,maxOpenDeg:90,baseAngleDeg:0,
+    profile:[{y:0,z:0},{y:0,z:-1000}],positionsPct:[0,50,100]};
+  const results=[];
+  // Case 3: sensor at hinge stays at the hinge (roof) for any angle.
+  let pose=sensorPoseAtAngle({posY:0,posZ:0,yawDeg:0},d,45,"LH");
+  results.push(["3 sensor at hinge fixed", approx(pose.x,0)&&approx(pose.y,1500)]);
+  // Case 2/4: door-local (0,-1000) at LH 90° lift -> plane (-1000, 1500).
+  pose=sensorPoseAtAngle({posY:0,posZ:-1000,yawDeg:0},d,
+    doorAngleForPercent(100,d,"LH"),"LH");
+  results.push(["2/4 wing lift 90° (Y-Z)", approx(pose.x,-1000)&&approx(pose.y,1500)]);
+  // Case 5: point on FOV centerline mid-range is IN.
+  const s=demoSensor(); const p0=sensorPoseAtAngle(s,d,0,"LH");
+  const poly=sensorFovProject(s,d,0,"LH","front");
+  const mid={x:p0.x+Math.cos(p0.facing)*800,y:p0.y+Math.sin(p0.facing)*800};
+  results.push(["5 centerline point IN FOV", pointInPolygon(mid,poly)===true]);
+  // Case 6: point beyond max range is OUT.
+  const far={x:p0.x+Math.cos(p0.facing)*3000,y:p0.y+Math.sin(p0.facing)*3000};
+  results.push(["6 far point OUT of FOV", pointInPolygon(far,poly)===false]);
+  // Phase 2: dynamic analysis returns a classification + clearance profile.
+  const dr=analyzeObstacle(project.obstacles[0]);
+  results.push(["dyn analysis returns verdict",
+    typeof dr.cls==="string" && dr.profile.length>0 && isFinite(dr.minClear)]);
+  // Phase 3: repeatability stats + rate classification.
+  const tpr={reps:[{detected:true,measuredMm:100},{detected:true,measuredMm:120},
+    {detected:false,measuredMm:NaN},{detected:true,measuredMm:110}]};
+  const st=tpStats(tpr);
+  results.push(["rep stats rate 75%, mean 110",
+    st && Math.round(st.rate)===75 && Math.round(st.meanMm)===110]);
+  results.push(["rate classification thresholds",
+    rateResult(96)==="PASS" && rateResult(92)==="CONDITIONAL PASS" && rateResult(80)==="FAIL"]);
+  // Config comparison: metrics computed via project swap; global project restored.
+  const before=project;
+  const m=computeConfigMetrics(defaultProject());
+  results.push(["config metrics + swap isolation",
+    typeof m.cov==="number" && typeof m.worst==="string" && project===before]);
+  // Overlap: two identical sensors fully overlap; two far apart do not.
+  const ov=withProject(defaultProject(), ()=>{
+    project.sensors.push(Object.assign({},project.sensors[0],{id:"S2"}));
+    const same=overlapAnalysis(0).overlapArea;
+    project.sensors[1].posZ+=4000; // move far away → no overlap
+    const apart=overlapAnalysis(0).overlapArea;
+    return {same,apart};
+  });
+  results.push(["overlap: identical>0, far-apart=0", ov.same>0 && ov.apart===0]);
+  // Motion: sensor at hinge has zero ego velocity; away-from-hinge is nonzero.
+  const mv=withProject(defaultProject(), ()=>{
+    const atHinge=Math.hypot(...(()=>{const v=sensorVelocity({posY:0,posZ:0,yawDeg:0},50);return[v.x,v.y];})());
+    const away=Math.hypot(...(()=>{const v=sensorVelocity(project.sensors[0],50);return[v.x,v.y];})());
+    return {atHinge, away};
+  });
+  results.push(["motion ego: hinge=0, away>0", mv.atHinge<1e-6 && mv.away>0]);
+  // Door preset: P700 Right door starts at hinge (0,0) and has 10 points.
+  const p700r=DOOR_PROFILE_PRESETS["p700r"].pts.map(([y,z])=>({y,z}));
+  results.push(["P700 right door preset: 10 points, hinge at 0,0, side LH",
+    p700r.length===10 && p700r[0].y===0 && p700r[0].z===0 && DOOR_PROFILE_PRESETS["p700r"].side==="LH"]);
+  results.push(["simplifyDP collapses straight run",
+    simplifyDP([{x:0,y:0},{x:5,y:0},{x:10,y:0}],1).length===2]);
+  // 3D: door prism is complete and every outer-surface point lies exactly at
+  // max range from the sensor (a rounded spherical-sector cap).
+  const dp=defaultProject();
+  const pf=withProject(dp, ()=>doorPrismFaces(0,"LH"));
+  results.push(["3D door prism face count", pf.length===2+dp.door.profile.length]);
+  const section=doorSectionYAtZ(doorPolygonAtAngle(dp.door,0,"LH"),dp.door.hingeZ-700);
+  results.push(["ZX projection finds inner + outer door-surface intersections",
+    section.length>=2 && Math.min(...section)<Math.max(...section)]);
+  const fr=withProject(dp, ()=>sensorConeFaces(dp.sensors[0],0,"LH"));
+  results.push(["3D FOV cone faces + apex", fr.faces.length>8 && isFinite(fr.apex.y)]);
+  const cg=withProject(dp, ()=>sensorConeGeom(dp.sensors[0],dp.door,0,"LH",36));
+  const radii=cg.outerRings.flat().map(q=>Math.hypot(q.x-cg.apex.x,q.y-cg.apex.y,q.z-cg.apex.z));
+  results.push(["3D FOV outer surface has constant max radius",
+    radii.every(r=>Math.abs(r-dp.sensors[0].maxRangeMm)<1e-6)]);
+  results.push(["3D FOV outer surface has horizontal + vertical cross lines",
+    cg.crossLines.length===2 && cg.crossLines.every(line=>line.length===37)]);
+  const smoothFront=sensorFovProject(dp.sensors[0],dp.door,0,"LH","front");
+  const smoothTop=sensorFovProject(dp.sensors[0],dp.door,0,"LH","top");
+  results.push(["front + top FOV use smooth 3D spherical projection",
+    smoothFront.length>30 && smoothTop.length>30]);
+  const clipped=clipPolyAboveGround([{x:0,y:0,z:-2},{x:2,y:0,z:2},{x:0,y:2,z:2}]);
+  results.push(["3D FOV ground clipping inserts z=0 intersections",
+    clipped.length===4 && clipped.every(q=>q.z>=0) && clipped.filter(q=>q.z===0).length===2]);
+  // 3D camera: spherical basis is orthonormal with world-up fixed (no roll).
+  const cam=withProject(dp, ()=>{ project.view3d.az=-0.9; project.view3d.polar=0.95;
+    const b=cam3Basis();
+    return {uw:V.dot(b.u,b.w), uv:V.dot(b.u,b.v), lu:V.len(b.u), lw:V.len(b.w), uz:b.u[2]}; });
+  results.push(["3D camera basis orthonormal + no roll",
+    Math.abs(cam.uw)<1e-9 && Math.abs(cam.uv)<1e-9 && Math.abs(cam.lu-1)<1e-9
+    && Math.abs(cam.lw-1)<1e-9 && Math.abs(cam.uz)<1e-9]); // right vector is horizontal → no roll
+  // Top view: footprint X-width == lengthMm; Y-span == door profile Y-span at 0%.
+  const fp=doorFootprintTop(project.door,0,"LH");
+  const fx=fp.map(p=>p.x), fy=fp.map(p=>p.y);
+  const front0=doorPolygonAtAngle(project.door,0,"LH").map(p=>p.x);
+  results.push(["top footprint X-width == lengthMm",
+    approx(Math.max(...fx)-Math.min(...fx), project.door.lengthMm)]);
+  results.push(["top footprint Y-span == profile Y-span",
+    approx(Math.max(...fy)-Math.min(...fy), Math.max(...front0)-Math.min(...front0))]);
+  console.groupCollapsed("FOV tool §27 self-tests");
+  results.forEach(([n,ok])=>console.log((ok?"PASS":"FAIL")+" — "+n));
+  console.groupEnd();
+}
+
+function bindSidebarResize(){
+  const handle=$("sidebarResize"), layout=document.querySelector(".layout");
+  if(!handle||!layout) return;
+  let dragging=false, startX=0, startW=0;
+  handle.addEventListener("mousedown",e=>{
+    e.preventDefault(); dragging=true; startX=e.clientX; handle.classList.add("active");
+    startW=document.querySelector(".side").getBoundingClientRect().width;
+  });
+  window.addEventListener("mousemove",e=>{
+    if(!dragging) return;
+    const w=Math.max(200,Math.min(600, startW+(e.clientX-startX)));
+    layout.style.gridTemplateColumns=w+"px 4px 1fr";
+    render();
+  });
+  window.addEventListener("mouseup",()=>{ if(dragging){ dragging=false; handle.classList.remove("active"); } });
+}
+function init(){
+  project=defaultProject(); seq={s:1,o:1,t:0,r:0};
+  bindTabs(); bindProject(); bindDoor(); bindCanvas(); bindToolbar();
+  bindSidebarResize();
+  loadAllUi(); recomputeAll();
+  toggleBottomDock();
+  window.addEventListener("resize",resizeCanvas);
+  resizeCanvas();
+  runSelfTests();
+  window.__appReady=true;
+}
+init();
+</script>
+</body>
+</html>
