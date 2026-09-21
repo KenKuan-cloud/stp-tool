@@ -613,6 +613,7 @@ let modelBBox = null;    // bounding box of loaded model
 
 // Export state
 let originalStepText = null;
+let originalStepFile = null;  // keep File ref for lazy text decode on export
 let originalFileName = 'model';
 let deletedPartNames = new Set();
 let mPending = [];       // pending measure points (max 1)
@@ -1462,12 +1463,25 @@ async function loadFile(file) {
       });
     }
 
-    showLoad(`Parsing: ${file.name}`);
-    const buf = await file.arrayBuffer();
-    const result = occtModule.ReadStepFile(new Uint8Array(buf), null);
+    // Warn on large files (>50 MB)
+    const sizeMB = file.size / (1024 * 1024);
+    if (sizeMB > 50) {
+      const proceed = confirm(
+        `This file is ${sizeMB.toFixed(0)} MB — large files may take a while to parse and use significant memory.\n\nContinue?`
+      );
+      if (!proceed) { hideLoad(); return; }
+    }
 
-    // Store original file for export
-    originalStepText = new TextDecoder().decode(buf);
+    showLoad(`Reading file (${sizeMB.toFixed(1)} MB)…`);
+    const buf = await file.arrayBuffer();
+
+    showLoad(`Parsing: ${file.name} (${sizeMB.toFixed(1)} MB)…`);
+    const fileBytes = new Uint8Array(buf);
+    const result = occtModule.ReadStepFile(fileBytes, null);
+
+    // Keep File reference for lazy text decode on export (avoids ~100 MB string copy at load)
+    originalStepFile = file;
+    originalStepText = null;
     originalFileName = file.name.replace(/\.(stp|step)$/i, '');
     deletedPartNames = new Set();
 
@@ -2991,6 +3005,12 @@ window.exportSTL = async () => {
 
 // ── Export filtered STEP (remove hidden parts) ──
 window.exportFilteredSTEP = async () => {
+  // Lazy-decode: read text from stored File on first export
+  if (!originalStepText && originalStepFile) {
+    showLoad('Reading original STEP text for export…');
+    originalStepText = await originalStepFile.text();
+    hideLoad();
+  }
   if (!originalStepText) { alert('No STEP file loaded.'); return; }
   if (!parts.length) { alert('No parts loaded.'); return; }
 
@@ -4048,6 +4068,7 @@ window.closeFile = () => {
 
   // Reset export state
   originalStepText = null;
+  originalStepFile = null;
   originalFileName = 'model';
   deletedPartNames = new Set();
   modelBBox = null;
