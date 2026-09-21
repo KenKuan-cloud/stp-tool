@@ -1477,18 +1477,45 @@ async function loadFile(file) {
 
     showLoad(`Parsing: ${file.name} (${sizeMB.toFixed(1)} MB)…`);
     const fileBytes = new Uint8Array(buf);
-    const result = occtModule.ReadStepFile(fileBytes, null);
+
+    // Try parsing with progressively finer tessellation to handle surface-only files
+    const tessParams = [
+      null,
+      { linearDeflection: 0.1, angularDeflection: 0.3 },
+      { linearDeflection: 0.01, angularDeflection: 0.1 },
+    ];
+
+    let result = null;
+    for (let ti = 0; ti < tessParams.length; ti++) {
+      const params = tessParams[ti];
+      if (ti > 0) {
+        showLoad(`Retrying with finer tessellation (attempt ${ti + 1}/${tessParams.length})…`);
+      }
+      result = occtModule.ReadStepFile(fileBytes, params);
+
+      if (!result.success || !result.meshes || !result.meshes.length) {
+        console.warn(`Parse attempt ${ti + 1}: no meshes (params: ${JSON.stringify(params)})`);
+        continue;
+      }
+
+      // Check if any mesh actually has vertex data
+      const hasGeometry = result.meshes.some(m =>
+        m.attributes && m.attributes.position && m.attributes.position.array && m.attributes.position.array.length > 0
+      );
+      if (hasGeometry) break;
+      console.warn(`Parse attempt ${ti + 1}: meshes returned but no vertex data (params: ${JSON.stringify(params)})`);
+    }
+
+    if (!result || !result.success || !result.meshes || !result.meshes.length) {
+      console.error('STEP parse result:', JSON.stringify(result, null, 2).slice(0, 2000));
+      throw new Error('STEP parse failed — no geometry found. The file may contain only curves/wireframes not supported for 3D viewing.');
+    }
 
     // Keep File reference for lazy text decode on export (avoids ~100 MB string copy at load)
     originalStepFile = file;
     originalStepText = null;
     originalFileName = file.name.replace(/\.(stp|step)$/i, '');
     deletedPartNames = new Set();
-
-    if (!result.success || !result.meshes || !result.meshes.length) {
-      console.error('STEP parse result:', JSON.stringify(result, null, 2).slice(0, 2000));
-      throw new Error('STEP parse failed — no geometry found. The file may contain only curves/wireframes not supported for 3D viewing.');
-    }
 
     console.log(`STEP parsed: ${result.meshes.length} meshes, first mesh keys:`, result.meshes[0] ? Object.keys(result.meshes[0]) : 'N/A');
 
@@ -1614,7 +1641,7 @@ async function loadFile(file) {
     });
 
     if (!parts.length) {
-      throw new Error('No renderable geometry found in the STEP file.');
+      throw new Error('No renderable geometry found in the STEP file. It may contain only curves, wireframes, or surfaces too small to tessellate.');
     }
 
     document.getElementById('i-parts').textContent = parts.length;
